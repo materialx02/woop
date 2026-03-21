@@ -3,9 +3,12 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { vehiclesApi, tripLogsApi, type Vehicle } from '$lib/api.js';
+	import { useQueryClient } from '@tanstack/svelte-query';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
+
+	const queryClient = useQueryClient();
 
 	// --- State ---
 	let isTracking = $state(false);
@@ -515,6 +518,11 @@
 				tripType: avgSpeed > 60 ? 'highway' : avgSpeed < 30 ? 'city' : 'mixed',
 				notes: `Live tracked trip — Score: ${qualityScore}/100`
 			});
+			// Invalidate caches so Dashboard/Trips update immediately
+			queryClient.invalidateQueries({ queryKey: ['trip-logs'] });
+			queryClient.invalidateQueries({ queryKey: ['driving-score'] });
+			queryClient.invalidateQueries({ queryKey: ['fuel-stats'] });
+			queryClient.invalidateQueries({ queryKey: ['vehicles'] });
 			saveMessage = 'Trip saved successfully!';
 		} catch (err) {
 			saveMessage = `Failed to save trip: ${err instanceof Error ? err.message : 'Unknown error'}`;
