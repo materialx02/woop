@@ -56,6 +56,106 @@
 	let geoWatchId = $state<number | null>(null);
 	let timerInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
+	// --- Demo / Simulation Mode ---
+	let demoMode = $state(false);
+	let simInterval = $state<ReturnType<typeof setInterval> | null>(null);
+	let simPhase = $state(0); // tracks simulation progress
+	// Simulation starting point (Manila area)
+	let simLat = $state(14.5995);
+	let simLon = $state(120.9842);
+
+	function simulateTick() {
+		simPhase++;
+
+		// Simulate realistic drive phases
+		let targetSpeed: number;
+		if (simPhase < 10) {
+			// Starting up — accelerating from idle
+			targetSpeed = simPhase * 8;
+		} else if (simPhase < 30) {
+			// City driving — 30-50 km/h with variation
+			targetSpeed = 40 + Math.sin(simPhase * 0.5) * 15;
+		} else if (simPhase < 50) {
+			// Highway — 70-100 km/h
+			targetSpeed = 85 + Math.sin(simPhase * 0.3) * 15;
+		} else if (simPhase < 60) {
+			// Slowing for exit
+			targetSpeed = Math.max(10, 80 - (simPhase - 50) * 8);
+		} else if (simPhase < 80) {
+			// City again — stop-and-go
+			targetSpeed = simPhase % 8 < 3 ? 0 : 30 + Math.random() * 20;
+		} else {
+			// Loop phases
+			simPhase = 10;
+			targetSpeed = 40;
+		}
+
+		// Add randomness
+		targetSpeed = Math.max(0, targetSpeed + (Math.random() - 0.5) * 10);
+
+		const newSpeed = targetSpeed;
+		const speedDelta = newSpeed - currentSpeed;
+		const accelMs2 = speedDelta / 3.6;
+
+		// Detect driving events
+		if (accelMs2 < -3) {
+			hardBrakingCount++;
+			events = [
+				{ timestamp: new Date(), type: 'hard-braking', description: 'Hard braking detected (sim)' },
+				...events.slice(0, 49)
+			];
+		} else if (accelMs2 > 3) {
+			rapidAccelCount++;
+			events = [
+				{ timestamp: new Date(), type: 'rapid-accel', description: 'Rapid acceleration detected (sim)' },
+				...events.slice(0, 49)
+			];
+		}
+
+		// Update speed
+		previousSpeed = currentSpeed;
+		currentSpeed = newSpeed;
+		if (currentSpeed > maxSpeed) maxSpeed = currentSpeed;
+		speedReadings = [...speedReadings, currentSpeed];
+		avgSpeed = speedReadings.reduce((a, b) => a + b, 0) / speedReadings.length;
+
+		// Track idle
+		if (currentSpeed < 3) idleSeconds++;
+
+		// Simulate GPS movement
+		const distKm = (currentSpeed / 3600); // distance in 1 second at current speed
+		const bearing = (simPhase * 3) % 360; // gradually changing direction
+		const dLat = (distKm / 111.32) * Math.cos(bearing * Math.PI / 180);
+		const dLon = (distKm / (111.32 * Math.cos(simLat * Math.PI / 180))) * Math.sin(bearing * Math.PI / 180);
+		simLat += dLat;
+		simLon += dLon;
+
+		if (lastPosition) {
+			const d = haversineDistance(lastPosition.lat, lastPosition.lon, simLat, simLon);
+			if (d > 0.005) distance += d;
+		}
+		lastPosition = { lat: simLat, lon: simLon };
+
+		// Simulate accelerometer data
+		accelX = (Math.random() - 0.5) * 2;
+		accelY = accelMs2 + (Math.random() - 0.5);
+		accelZ = 9.8 + (Math.random() - 0.5) * 0.5;
+	}
+
+	function startSimulation() {
+		simPhase = 0;
+		simLat = 14.5995;
+		simLon = 120.9842;
+		simInterval = setInterval(simulateTick, 1000);
+	}
+
+	function stopSimulation() {
+		if (simInterval) {
+			clearInterval(simInterval);
+			simInterval = null;
+		}
+	}
+
 	// --- Derived ---
 	let drivingQuality = $derived.by(() => {
 		if (aiScore !== null) {
@@ -333,18 +433,23 @@
 			}
 		}, 1000);
 
-		// Start GPS
-		if (gpsEnabled && 'geolocation' in navigator) {
-			geoWatchId = navigator.geolocation.watchPosition(handlePosition, handlePositionError, {
-				enableHighAccuracy: true,
-				maximumAge: 1000,
-				timeout: 10000
-			});
-		}
+		if (demoMode) {
+			// Demo mode: use simulation instead of real sensors
+			startSimulation();
+		} else {
+			// Start GPS
+			if (gpsEnabled && 'geolocation' in navigator) {
+				geoWatchId = navigator.geolocation.watchPosition(handlePosition, handlePositionError, {
+					enableHighAccuracy: true,
+					maximumAge: 1000,
+					timeout: 10000
+				});
+			}
 
-		// Start Motion
-		if (motionEnabled && 'DeviceMotionEvent' in window) {
-			window.addEventListener('devicemotion', handleDeviceMotion);
+			// Start Motion
+			if (motionEnabled && 'DeviceMotionEvent' in window) {
+				window.addEventListener('devicemotion', handleDeviceMotion);
+			}
 		}
 	}
 
@@ -356,6 +461,9 @@
 			clearInterval(timerInterval);
 			timerInterval = null;
 		}
+
+		// Clear simulation
+		stopSimulation();
 
 		// Clear GPS
 		if (geoWatchId !== null) {
@@ -419,6 +527,7 @@
 	$effect(() => {
 		return () => {
 			if (timerInterval) clearInterval(timerInterval);
+			if (simInterval) clearInterval(simInterval);
 			if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
 			window.removeEventListener('devicemotion', handleDeviceMotion);
 		};
@@ -507,20 +616,29 @@
 
 		<div class="flex items-center rounded-md border">
 			<button
-				class="px-3 py-2 text-sm font-medium transition-colors {gpsEnabled
-					? 'bg-primary text-primary-foreground'
+				class="px-3 py-2 text-sm font-medium transition-colors {demoMode
+					? 'bg-amber-500 text-white'
 					: 'hover:bg-muted'}"
-				onclick={() => (gpsEnabled = !gpsEnabled)}
+				onclick={() => (demoMode = !demoMode)}
 				disabled={isTracking}
+			>
+				Demo
+			</button>
+			<button
+				class="px-3 py-2 text-sm font-medium transition-colors border-l {gpsEnabled && !demoMode
+					? 'bg-primary text-primary-foreground'
+					: 'hover:bg-muted'} {demoMode ? 'opacity-40' : ''}"
+				onclick={() => (gpsEnabled = !gpsEnabled)}
+				disabled={isTracking || demoMode}
 			>
 				GPS
 			</button>
 			<button
-				class="px-3 py-2 text-sm font-medium transition-colors border-l {motionEnabled
+				class="px-3 py-2 text-sm font-medium transition-colors border-l {motionEnabled && !demoMode
 					? 'bg-primary text-primary-foreground'
-					: 'hover:bg-muted'}"
+					: 'hover:bg-muted'} {demoMode ? 'opacity-40' : ''}"
 				onclick={() => (motionEnabled = !motionEnabled)}
-				disabled={isTracking}
+				disabled={isTracking || demoMode}
 			>
 				Motion
 			</button>
