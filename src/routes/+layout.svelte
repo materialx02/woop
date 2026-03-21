@@ -67,6 +67,11 @@
 	function toggleTheme() {
 		themeState.set(themeState.current === 'dark' ? 'light' : 'dark');
 	}
+
+	const isOnTracking = $derived(
+		page.url.pathname === base + '/live-tracking' ||
+		page.url.pathname === base + '/live-tracking/'
+	);
 </script>
 
 <svelte:head>
@@ -239,9 +244,22 @@
 			</div>
 		</aside>
 
-		<main class="container mx-auto px-4 py-5 md:px-6 md:py-6">
+		<main class="container mx-auto px-4 py-5 md:px-6 md:py-6 pb-24 md:pb-6">
 			{@render children()}
 		</main>
+
+		<!-- Floating Action Button: Start Trip -->
+		{#if !isOnTracking}
+			<a
+				href="{base}/live-tracking"
+				class="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-primary px-5 py-3.5 text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 active:scale-95 transition-all duration-200 md:bottom-8 md:right-8"
+			>
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+					<polygon points="5 3 19 12 5 21 5 3"/>
+				</svg>
+				<span class="font-semibold text-sm">Start Trip</span>
+			</a>
+		{/if}
 	</div>
 </QueryClientProvider>
 
