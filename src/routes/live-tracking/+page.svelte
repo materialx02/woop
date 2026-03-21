@@ -76,9 +76,44 @@
 	let elapsedMinutes = $derived(Math.floor(elapsedSeconds / 60));
 	let idleMinutes = $derived(Math.round(idleSeconds / 60 * 10) / 10);
 
+	// Local efficiency estimate (mirrors AI service logic, works offline)
+	let localEfficiency = $derived.by(() => {
+		const fuelType = selectedVehicle?.fuelType ?? 'gasoline';
+		const baseMap: Record<string, number> = { gasoline: 12, diesel: 14, hybrid: 18, ev: 6 };
+		const base = baseMap[fuelType] ?? 12;
+
+		let adjustment = 0;
+		if (avgSpeed > 0) {
+			if (avgSpeed >= 60 && avgSpeed <= 80) adjustment += 2;
+			else if (avgSpeed > 100) adjustment -= 3;
+			else if (avgSpeed < 20) adjustment -= 2;
+		}
+		if (distance > 0) {
+			const eventsPerKm = (hardBrakingCount + rapidAccelCount) / Math.max(distance, 0.1);
+			adjustment -= Math.min(eventsPerKm * 0.3, 3);
+		}
+		if (elapsedSeconds > 0) {
+			const idleRatio = idleSeconds / elapsedSeconds;
+			if (idleRatio > 0.3) adjustment -= 2;
+			else if (idleRatio > 0.15) adjustment -= 1;
+		}
+		return Math.max(base + adjustment, base * 0.5);
+	});
+
 	let estFuelEfficiency = $derived.by(() => {
-		if (aiEfficiency !== null) return `${aiEfficiency}`;
+		if (aiEfficiency !== null) return aiEfficiency.toFixed(1);
+		if (elapsedSeconds > 5) return localEfficiency.toFixed(1);
 		return '--';
+	});
+
+	// Estimated fuel cost based on efficiency and distance
+	let estFuelCost = $derived.by(() => {
+		const eff = aiEfficiency ?? (elapsedSeconds > 5 ? localEfficiency : null);
+		if (!eff || eff <= 0 || distance < 0.01) return null;
+		const litersUsed = distance / eff;
+		// Default price per liter (PHP) - could be fetched from fuel logs later
+		const pricePerLiter = 59.5;
+		return litersUsed * pricePerLiter;
 	});
 
 	// --- Auto-start flag ---
@@ -554,7 +589,7 @@
 	{/if}
 
 	<!-- Stat Cards -->
-	<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+	<div class="grid grid-cols-2 gap-4 lg:grid-cols-5">
 		<!-- Current Speed -->
 		<div class="rounded-xl bg-blue-500 p-4 text-white">
 			<div class="flex items-center gap-2 text-sm font-medium opacity-90">
@@ -653,6 +688,24 @@
 			</div>
 			<div class="mt-2 text-3xl font-bold">{estFuelEfficiency}</div>
 			<div class="text-sm opacity-75">km/L</div>
+		</div>
+
+		<!-- Est. Fuel Cost -->
+		<div class="rounded-xl bg-violet-500 p-4 text-white">
+			<div class="flex items-center gap-2 text-sm font-medium opacity-90">
+				<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+				</svg>
+				Est. Fuel Cost
+			</div>
+			<div class="mt-2 text-3xl font-bold">
+				{#if estFuelCost !== null}
+					{estFuelCost.toFixed(0)}
+				{:else}
+					--
+				{/if}
+			</div>
+			<div class="text-sm opacity-75">PHP</div>
 		</div>
 	</div>
 
