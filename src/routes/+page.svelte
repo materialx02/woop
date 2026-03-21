@@ -56,6 +56,24 @@
 		return tripLogsQuery.data.filter((t: TripLog) => t.vehicleId === activeVehicle.id);
 	});
 
+	// Combined stats from both fuel logs AND trip logs
+	const tripTotalDistance = $derived(
+		vehicleTripLogs.reduce((sum, t) => sum + t.distanceKm, 0)
+	);
+	const tripTotalFuel = $derived(
+		vehicleTripLogs.reduce((sum, t) => sum + (t.fuelConsumedLiters ?? 0), 0)
+	);
+	const combinedTotalDistance = $derived(
+		Math.max(statsQuery.data?.totalDistance ?? 0, tripTotalDistance)
+	);
+	const combinedAvgEfficiency = $derived.by(() => {
+		// Prefer fuel log stats if available (more accurate), fallback to trip data
+		if (statsQuery.data?.avgKmPerLiter) return statsQuery.data.avgKmPerLiter;
+		if (tripTotalFuel > 0 && tripTotalDistance > 0) return tripTotalDistance / tripTotalFuel;
+		return null;
+	});
+	const totalTrips = $derived(vehicleTripLogs.length);
+
 	// Cost trend data (chronological order for chart)
 	const costTrendData = $derived.by(() => {
 		return [...vehicleFuelLogs].reverse().map((l) => ({
@@ -92,12 +110,21 @@
 	// Recent fuel logs for table (last 5, newest first)
 	const recentLogs = $derived(vehicleFuelLogs.slice(0, 5));
 
-	// Next refuel estimate (AI prediction based on recent average cost)
+	// Next refuel estimate based on fuel logs or trip efficiency
 	const nextRefuelEstimate = $derived.by(() => {
-		if (vehicleFuelLogs.length < 2) return null;
-		const recent = vehicleFuelLogs.slice(0, 5);
-		const avgCost = recent.reduce((sum, l) => sum + l.totalCost, 0) / recent.length;
-		return Math.round(avgCost);
+		// Use fuel log data if available
+		if (vehicleFuelLogs.length >= 2) {
+			const recent = vehicleFuelLogs.slice(0, 5);
+			const avgCost = recent.reduce((sum, l) => sum + l.totalCost, 0) / recent.length;
+			return Math.round(avgCost);
+		}
+		// Fallback: estimate from trip data + default fuel price
+		if (tripTotalFuel > 0 && vehicleTripLogs.length > 0) {
+			const avgFuelPerTrip = tripTotalFuel / vehicleTripLogs.length;
+			const pricePerLiter = 59.5; // default PHP price
+			return Math.round(avgFuelPerTrip * pricePerLiter);
+		}
+		return null;
 	});
 
 	// Efficiency change vs last period
@@ -217,7 +244,7 @@
 						<div>
 							<p class="text-sm text-muted-foreground font-medium">Avg Fuel Efficiency</p>
 							<p class="text-2xl font-bold mt-1">
-								{formatNumber(statsQuery.data?.avgKmPerLiter, 2)} km/L
+								{formatNumber(combinedAvgEfficiency, 2)} km/L
 							</p>
 							{#if efficiencyChange != null}
 								<p
@@ -258,8 +285,11 @@
 						<div>
 							<p class="text-sm text-muted-foreground font-medium">Total Fuel Cost</p>
 							<p class="text-2xl font-bold mt-1">
-								{formatCurrency(statsQuery.data?.totalCost)}
+								{formatCurrency(statsQuery.data?.totalCost ?? 0)}
 							</p>
+							{#if totalTrips > 0}
+								<p class="text-xs text-muted-foreground mt-1">{totalTrips} trips recorded</p>
+							{/if}
 						</div>
 						<div
 							class="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/40"
@@ -288,7 +318,7 @@
 						<div>
 							<p class="text-sm text-muted-foreground font-medium">Total Distance</p>
 							<p class="text-2xl font-bold mt-1">
-								{formatNumber(statsQuery.data?.totalDistance, 0)} km
+								{formatNumber(combinedTotalDistance, 1)} km
 							</p>
 						</div>
 						<div
