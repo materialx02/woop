@@ -50,11 +50,11 @@
 	});
 
 	const navItems = [
+		{ href: '/live-tracking', label: 'Live Tracking', icon: 'tracking' },
 		{ href: '', label: 'Dashboard', icon: 'dashboard' },
 		{ href: '/fuel-log', label: 'Fuel Log', icon: 'fuel' },
 		{ href: '/trips', label: 'Trips', icon: 'trips' },
 		{ href: '/insights', label: 'Insights', icon: 'insights' },
-		{ href: '/live-tracking', label: 'Live Tracking', icon: 'tracking' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' }
 	];
 
