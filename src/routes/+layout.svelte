@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 	import { page } from '$app/state';
+	import { base } from '$app/paths';
 	import { themeState } from '$lib/theme.svelte.js';
 	import { pwaInfo } from 'virtual:pwa-info';
 	import { onMount } from 'svelte';
@@ -41,7 +42,7 @@
 	});
 
 	const navItems = [
-		{ href: '/', label: 'Dashboard', icon: 'dashboard' },
+		{ href: '', label: 'Dashboard', icon: 'dashboard' },
 		{ href: '/fuel-log', label: 'Fuel Log', icon: 'fuel' },
 		{ href: '/trips', label: 'Trips', icon: 'trips' },
 		{ href: '/insights', label: 'Insights', icon: 'insights' },
@@ -50,8 +51,9 @@
 	];
 
 	function isActive(href: string): boolean {
-		if (href === '/') return page.url.pathname === '/';
-		return page.url.pathname.startsWith(href);
+		const fullHref = base + href;
+		if (href === '') return page.url.pathname === base || page.url.pathname === base + '/';
+		return page.url.pathname.startsWith(fullHref);
 	}
 
 	function toggleTheme() {
@@ -74,7 +76,7 @@
 		<header class="sticky top-0 z-50 w-full bg-card border-b shadow-sm">
 			<div class="container mx-auto flex h-16 items-center px-6">
 				<!-- Logo -->
-				<a href="/" class="flex items-center gap-2.5 mr-8">
+				<a href="{base}/" class="flex items-center gap-2.5 mr-8">
 					<div class="w-9 h-9 rounded-lg bg-primary flex items-center justify-center">
 						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M3 22V6l9-4 9 4v16" />
@@ -93,7 +95,7 @@
 				<nav class="flex items-center gap-1">
 					{#each navItems as item}
 						<a
-							href={item.href}
+							href="{base}{item.href}"
 							class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
 								{isActive(item.href)
 									? 'text-primary bg-primary/8'

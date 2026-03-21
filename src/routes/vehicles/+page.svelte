@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { vehiclesApi } from '$lib/api.js';
 	import type { Vehicle } from '$lib/api.js';
@@ -37,7 +38,7 @@
 			<h1 class="text-3xl font-bold tracking-tight">Vehicles</h1>
 			<p class="text-muted-foreground">Manage your vehicles</p>
 		</div>
-		<Button onclick={() => (window.location.href = '/vehicles/new')}>
+		<Button onclick={() => (window.location.href = `${base}/vehicles/new`)}>
 			{#snippet children()}Add Vehicle{/snippet}
 		</Button>
 	</div>
@@ -48,7 +49,7 @@
 		<Card.Root class="p-12 text-center">
 			<Card.Content>
 				<p class="text-lg text-muted-foreground mb-4">No vehicles yet.</p>
-				<Button onclick={() => (window.location.href = '/vehicles/new')}>
+				<Button onclick={() => (window.location.href = `${base}/vehicles/new`)}>
 					{#snippet children()}Add Your First Vehicle{/snippet}
 				</Button>
 			</Card.Content>
@@ -96,7 +97,7 @@
 						<Button
 							variant="outline"
 							size="sm"
-							onclick={() => (window.location.href = `/vehicles/${vehicle.id}/edit`)}
+							onclick={() => (window.location.href = `${base}/vehicles/${vehicle.id}/edit`)}
 						>
 							{#snippet children()}Edit{/snippet}
 						</Button>

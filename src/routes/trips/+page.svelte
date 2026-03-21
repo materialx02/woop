@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { vehiclesApi, tripLogsApi } from '$lib/api.js';
 	import { tripLogSchema, type TripLogInput } from '$lib/validators.js';
@@ -169,7 +170,7 @@
 		<Card.Root class="p-12 text-center">
 			<Card.Content>
 				<p class="text-lg text-muted-foreground mb-4">Add a vehicle first before logging trips.</p>
-				<Button onclick={() => goto('/vehicles/new')} class="bg-violet-500 hover:bg-violet-600 text-white">
+				<Button onclick={() => goto(`${base}/vehicles/new`)} class="bg-violet-500 hover:bg-violet-600 text-white">
 					{#snippet children()}Add Vehicle{/snippet}
 				</Button>
 			</Card.Content>

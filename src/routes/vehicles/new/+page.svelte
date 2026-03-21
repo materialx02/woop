@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { vehiclesApi } from '$lib/api.js';
 	import { vehicleSchema, type VehicleInput } from '$lib/validators.js';
@@ -24,7 +25,7 @@
 		mutationFn: (data: VehicleInput) => vehiclesApi.create(data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['vehicles'] });
-			goto('/vehicles');
+			goto(`${base}/vehicles`);
 		}
 	}));
 
@@ -122,7 +123,7 @@
 					<Button type="submit" disabled={mutation.isPending}>
 						{#snippet children()}{mutation.isPending ? 'Saving...' : 'Add Vehicle'}{/snippet}
 					</Button>
-					<Button variant="outline" type="button" onclick={() => goto('/vehicles')}>
+					<Button variant="outline" type="button" onclick={() => goto(`${base}/vehicles`)}>
 						{#snippet children()}Cancel{/snippet}
 					</Button>
 				</div>

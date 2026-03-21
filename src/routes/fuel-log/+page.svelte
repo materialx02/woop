@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { vehiclesApi, fuelLogsApi } from '$lib/api.js';
 	import type { FuelStats } from '$lib/api.js';
@@ -174,7 +175,7 @@
 				<p class="text-lg text-muted-foreground mb-4">
 					Add a vehicle first before logging fuel.
 				</p>
-				<Button onclick={() => goto('/vehicles/new')}>
+				<Button onclick={() => goto(`${base}/vehicles/new`)}>
 					{#snippet children()}Add Vehicle{/snippet}
 				</Button>
 			</Card.Content>
