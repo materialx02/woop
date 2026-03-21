@@ -1,0 +1,12 @@
+services:
+  ai-service:
+    build: ./ai-service
+    ports:
+      - "8000:8000"
+    environment:
+      MODEL_STORAGE_PATH: /app/trained_models
+    volumes:
+      - ai_models:/app/trained_models
+
+volumes:
+  ai_models:
