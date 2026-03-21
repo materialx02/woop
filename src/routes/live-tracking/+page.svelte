@@ -3,6 +3,9 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { vehiclesApi, tripLogsApi, type Vehicle } from '$lib/api.js';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 
 	// --- State ---
 	let isTracking = $state(false);
@@ -78,6 +81,9 @@
 		return '--';
 	});
 
+	// --- Auto-start flag ---
+	let autoStartPending = $state(page.url.searchParams.get('autostart') === 'true');
+
 	// --- Load vehicles ---
 	$effect(() => {
 		vehiclesApi.list().then((v) => {
@@ -86,6 +92,16 @@
 				selectedVehicleId = v[0].id;
 			}
 		});
+	});
+
+	// --- Auto-start tracking when vehicles are loaded and autostart param is set ---
+	$effect(() => {
+		if (autoStartPending && vehicles.length > 0 && selectedVehicleId && !isTracking) {
+			autoStartPending = false;
+			// Clear the query param from URL without reload
+			goto(`${base}/live-tracking`, { replaceState: true, noScroll: true });
+			startTracking();
+		}
 	});
 
 	// --- Haversine distance ---
@@ -317,6 +333,11 @@
 
 		// Final AI analysis
 		fetchAiAlerts();
+
+		// Auto-save trip if meaningful data was recorded
+		if (distance > 0.01 && selectedVehicleId) {
+			saveTrip();
+		}
 	}
 
 	function toggleTracking() {
