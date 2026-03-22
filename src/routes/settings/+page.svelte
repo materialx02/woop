@@ -5,6 +5,13 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { themeState, type Theme } from '$lib/theme.svelte.js';
+	import {
+		isSupported as notifSupported,
+		permissionState,
+		requestPermission,
+		syncSettingsToSW,
+		init as initNotifications
+	} from '$lib/notifications.js';
 
 	// Profile settings
 	let displayName = $state('Driver');
@@ -15,10 +22,14 @@
 	let aiServiceUrl = $state('');
 	let aiStatus = $state<'unchecked' | 'checking' | 'connected' | 'disconnected'>('unchecked');
 
+	// Fuel price
+	let fuelPricePerLiter = $state(59.5);
+
 	// Notification preferences
 	let fuelPriceAlerts = $state(true);
 	let efficiencyInsights = $state(true);
 	let maintenanceReminders = $state(false);
+	let notifPermission = $state<NotificationPermission | 'unsupported'>('default');
 
 	// Status messages
 	let saveMessage = $state('');
@@ -33,6 +44,7 @@
 					displayName = settings.displayName ?? 'Driver';
 					defaultFuelType = settings.defaultFuelType ?? 'gasoline';
 					currency = settings.currency ?? 'PHP';
+					fuelPricePerLiter = settings.fuelPricePerLiter ?? 59.5;
 					fuelPriceAlerts = settings.fuelPriceAlerts ?? true;
 					efficiencyInsights = settings.efficiencyInsights ?? true;
 					maintenanceReminders = settings.maintenanceReminders ?? false;
@@ -41,6 +53,7 @@
 				}
 			}
 			aiServiceUrl = localStorage.getItem('fuelwise_ai_url') ?? '';
+			notifPermission = permissionState();
 		}
 	});
 
@@ -49,6 +62,7 @@
 			displayName,
 			defaultFuelType,
 			currency,
+			fuelPricePerLiter,
 			fuelPriceAlerts,
 			efficiencyInsights,
 			maintenanceReminders
@@ -56,6 +70,30 @@
 		localStorage.setItem('fuelwise-settings', JSON.stringify(settings));
 		saveMessage = 'Settings saved successfully!';
 		setTimeout(() => (saveMessage = ''), 3000);
+
+		// Sync notification settings to service worker
+		if (notifSupported() && notifPermission === 'granted') {
+			syncSettingsToSW({
+				fuelPriceAlerts,
+				efficiencyInsights,
+				maintenanceReminders
+			});
+		}
+	}
+
+	async function enableNotifications() {
+		const permission = await requestPermission();
+		notifPermission = permission;
+		if (permission === 'granted') {
+			await syncSettingsToSW({
+				fuelPriceAlerts,
+				efficiencyInsights,
+				maintenanceReminders
+			});
+			await initNotifications();
+			saveMessage = 'Notifications enabled!';
+			setTimeout(() => (saveMessage = ''), 3000);
+		}
 	}
 
 	function saveAiUrl() {
@@ -182,6 +220,21 @@
 							</select>
 						</div>
 
+						<div class="space-y-2">
+							<Label for="fuelPrice">Fuel Price per Liter ({currency === 'PHP' ? '₱' : currency})</Label>
+							<Input
+								id="fuelPrice"
+								type="number"
+								step="0.1"
+								min="0"
+								bind:value={fuelPricePerLiter}
+								placeholder="59.5"
+							/>
+							<p class="text-xs text-muted-foreground">
+								Used for estimated fuel cost calculations. Update this when fuel prices change.
+							</p>
+						</div>
+
 						{#if saveMessage}
 							<p class="text-sm text-green-600">{saveMessage}</p>
 						{/if}
@@ -298,6 +351,47 @@
 				</Card.Header>
 				<Card.Content>
 					<div class="space-y-4">
+						<!-- Permission Banner -->
+						{#if notifPermission === 'unsupported'}
+							<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+								<p class="text-sm text-amber-600 dark:text-amber-400">
+									Notifications are not supported in this browser.
+								</p>
+							</div>
+						{:else if notifPermission === 'default'}
+							<button
+								onclick={enableNotifications}
+								class="w-full rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-left transition-colors hover:bg-primary/20"
+							>
+								<div class="flex items-center gap-3">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary shrink-0">
+										<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+									</svg>
+									<div>
+										<p class="text-sm font-medium text-primary">Enable Notifications</p>
+										<p class="text-xs text-muted-foreground">Get background alerts for trip tracking, fuel prices, and maintenance reminders</p>
+									</div>
+								</div>
+							</button>
+						{:else if notifPermission === 'denied'}
+							<div class="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
+								<p class="text-sm text-destructive">
+									Notifications are blocked. Please enable them in your browser settings to receive alerts.
+								</p>
+							</div>
+						{:else}
+							<div class="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3">
+								<div class="flex items-center gap-2">
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-600 dark:text-green-400">
+										<path d="M20 6 9 17l-5-5"/>
+									</svg>
+									<p class="text-sm text-green-600 dark:text-green-400">
+										Notifications enabled — you'll receive alerts even when the app is minimized
+									</p>
+								</div>
+							</div>
+						{/if}
+
 						<!-- Fuel Price Alerts -->
 						<div class="flex items-center justify-between">
 							<div>
@@ -357,6 +451,20 @@
 								<span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform {maintenanceReminders ? 'translate-x-6' : 'translate-x-1'}" />
 							</button>
 						</div>
+
+						<!-- Trip Tracking Info -->
+						{#if notifPermission === 'granted'}
+							<div class="border-t pt-4">
+								<div class="flex items-start gap-3">
+									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground mt-0.5 shrink-0">
+										<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+									</svg>
+									<p class="text-xs text-muted-foreground">
+										Live trip tracking notifications appear automatically when you minimize the app during an active trip, showing your distance, time, and speed — similar to ride-hailing apps.
+									</p>
+								</div>
+							</div>
+						{/if}
 					</div>
 				</Card.Content>
 			</Card.Root>

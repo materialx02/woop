@@ -67,9 +67,27 @@
 										'No details'}
 								</Card.Description>
 							</div>
-							<Badge variant="outline">
-								{#snippet children()}{fuelTypeLabel(vehicle.fuelType)}{/snippet}
-							</Badge>
+							<div class="flex items-center gap-1">
+								<Badge variant="outline">
+									{#snippet children()}{fuelTypeLabel(vehicle.fuelType)}{/snippet}
+								</Badge>
+								<button
+									type="button"
+									class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+									onclick={() => (window.location.href = `${base}/vehicles/${vehicle.id}/edit`)}
+									aria-label="Edit {vehicle.name}"
+								>
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+								</button>
+								<button
+									type="button"
+									class="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-muted transition-colors"
+									onclick={() => handleDelete(vehicle.id, vehicle.name)}
+									aria-label="Delete {vehicle.name}"
+								>
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+								</button>
+							</div>
 						</div>
 					</Card.Header>
 					<Card.Content>
@@ -93,20 +111,25 @@
 							{/if}
 						</div>
 					</Card.Content>
-					<Card.Footer class="gap-2">
+					<Card.Footer class="gap-2 justify-end">
 						<Button
 							variant="outline"
 							size="sm"
-							onclick={() => (window.location.href = `${base}/vehicles/${vehicle.id}/edit`)}
+							onclick={() => (window.location.href = `${base}/fuel-log?vehicleId=${vehicle.id}`)}
 						>
-							{#snippet children()}Edit{/snippet}
+							{#snippet children()}
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 22V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v17"/><path d="M15 10h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 4"/><path d="M3 22h12"/><path d="M7 9h4"/></svg>
+								Log Fuel
+							{/snippet}
 						</Button>
 						<Button
-							variant="destructive"
 							size="sm"
-							onclick={() => handleDelete(vehicle.id, vehicle.name)}
+							onclick={() => (window.location.href = `${base}/live-tracking?autostart=true`)}
 						>
-							{#snippet children()}Delete{/snippet}
+							{#snippet children()}
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+								Start Trip
+							{/snippet}
 						</Button>
 					</Card.Footer>
 				</Card.Root>

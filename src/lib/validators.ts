@@ -8,13 +8,14 @@ export const vehicleSchema = z.object({
 	fuelType: z.enum(['gasoline', 'diesel', 'ev', 'hybrid']).default('gasoline'),
 	tankCapacityLiters: z.number().positive().optional(),
 	batteryCapacityKwh: z.number().positive().optional(),
+	weightKg: z.number().positive().optional(),
 	odometerKm: z.number().min(0).optional()
 });
 
 export const fuelLogSchema = z.object({
 	vehicleId: z.string().uuid('Invalid vehicle'),
 	date: z.string().min(1, 'Date is required'),
-	odometerKm: z.number().positive('Odometer reading must be positive'),
+	odometerKm: z.number().positive('Odometer reading must be positive').optional(),
 	liters: z.number().positive('Liters must be positive').optional(),
 	kwh: z.number().positive('kWh must be positive').optional(),
 	pricePerUnit: z.number().positive('Price must be positive'),

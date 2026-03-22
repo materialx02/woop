@@ -47,6 +47,8 @@ export default defineConfig({
 			},
 			workbox: {
 				globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+				// Load custom notification handling code into the service worker
+				importScripts: ['custom-sw.js'],
 				runtimeCaching: [
 					{
 						urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

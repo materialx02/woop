@@ -10,6 +10,7 @@ export interface Vehicle {
 	fuelType: 'gasoline' | 'diesel' | 'ev' | 'hybrid';
 	tankCapacityLiters?: number;
 	batteryCapacityKwh?: number;
+	weightKg?: number;
 	odometerKm: number;
 	isActive: boolean;
 	createdAt: Date;
@@ -20,7 +21,7 @@ export interface FuelLog {
 	id: string;
 	vehicleId: string;
 	date: string;
-	odometerKm: number;
+	odometerKm?: number;
 	liters?: number;
 	kwh?: number;
 	pricePerUnit: number;

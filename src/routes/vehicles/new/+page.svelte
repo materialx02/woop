@@ -19,11 +19,30 @@
 	let tankCapacityLiters = $state('');
 	let batteryCapacityKwh = $state('');
 	let odometerKm = $state('');
+	let fuelPricePerLiter = $state('');
 	let errors = $state<Record<string, string>>({});
+
+	// Check if this is the first vehicle (show fuel price field)
+	let isFirstVehicle = $state(true);
+	vehiclesApi.list().then((v) => {
+		isFirstVehicle = v.length === 0;
+	});
 
 	const mutation = createMutation(() => ({
 		mutationFn: (data: VehicleInput) => vehiclesApi.create(data),
 		onSuccess: () => {
+			// Save fuel price to settings if provided
+			if (fuelPricePerLiter) {
+				const price = parseFloat(fuelPricePerLiter);
+				if (!isNaN(price) && price > 0) {
+					try {
+						const raw = localStorage.getItem('fuelwise-settings');
+						const settings = raw ? JSON.parse(raw) : {};
+						settings.fuelPricePerLiter = price;
+						localStorage.setItem('fuelwise-settings', JSON.stringify(settings));
+					} catch { /* ignore */ }
+				}
+			}
 			queryClient.invalidateQueries({ queryKey: ['vehicles'] });
 			goto(`${base}/vehicles`);
 		}
@@ -118,6 +137,14 @@
 					<Label for="odometer">Current Odometer (km)</Label>
 					<Input id="odometer" type="number" step="0.1" placeholder="0" bind:value={odometerKm} />
 				</div>
+
+				{#if isFirstVehicle && fuelType !== 'ev'}
+					<div class="space-y-2">
+						<Label for="fuelPrice">Current Fuel Price per Liter (&#8369;)</Label>
+						<Input id="fuelPrice" type="number" step="0.01" placeholder="e.g. 59.50" bind:value={fuelPricePerLiter} />
+						<p class="text-xs text-muted-foreground">Helps estimate trip fuel costs. You can update it anytime in Settings.</p>
+					</div>
+				{/if}
 
 				<div class="flex gap-2 pt-4">
 					<Button type="submit" disabled={mutation.isPending}>

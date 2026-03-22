@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import { page } from '$app/state';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { vehiclesApi, fuelLogsApi } from '$lib/api.js';
 	import type { FuelStats } from '$lib/api.js';
@@ -11,6 +12,8 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { goto } from '$app/navigation';
+
+	const initialVehicleId = page.url.searchParams.get('vehicleId') ?? '';
 
 	const queryClient = useQueryClient();
 
@@ -40,10 +43,14 @@
 		}
 	});
 
-	// Auto-select first vehicle and sync fuel type
+	// Auto-select vehicle from query param or first vehicle
 	$effect(() => {
 		if (vehiclesQuery.data?.length && !vehicleId) {
-			vehicleId = vehiclesQuery.data[0].id;
+			if (initialVehicleId && vehiclesQuery.data.some((v) => v.id === initialVehicleId)) {
+				vehicleId = initialVehicleId;
+			} else {
+				vehicleId = vehiclesQuery.data[0].id;
+			}
 		}
 	});
 
@@ -103,7 +110,7 @@
 		const data = {
 			vehicleId,
 			date,
-			odometerKm: parseFloat(odometerKm),
+			odometerKm: odometerKm ? parseFloat(odometerKm) : undefined,
 			liters: liters ? parseFloat(liters) : undefined,
 			pricePerUnit: parseFloat(pricePerUnit),
 			totalCost: parseFloat(totalCost),
@@ -160,6 +167,11 @@
 		const vehicle = vehiclesQuery.data?.find((v) => v.id === log.vehicleId);
 		return vehicle?.fuelType ?? 'gasoline';
 	}
+
+	function getVehicleName(log: FuelLog): string {
+		const vehicle = vehiclesQuery.data?.find((v) => v.id === log.vehicleId);
+		return vehicle?.name ?? 'Unknown';
+	}
 </script>
 
 <div class="space-y-6">
@@ -170,13 +182,15 @@
 	</div>
 
 	{#if !vehiclesQuery.data?.length && !vehiclesQuery.isLoading}
-		<Card.Root class="p-12 text-center">
-			<Card.Content>
-				<p class="text-lg text-muted-foreground mb-4">
-					Add a vehicle first before logging fuel.
-				</p>
+		<Card.Root class="border-dashed">
+			<Card.Content class="flex flex-col items-center py-12 px-6 text-center">
+				<div class="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M3 22V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v17"/><path d="M15 10h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 4"/><path d="M3 22h12"/><path d="M7 9h4"/></svg>
+				</div>
+				<h3 class="font-semibold text-lg mb-1">No vehicle yet</h3>
+				<p class="text-sm text-muted-foreground mb-5">You need to add a vehicle before you can log fuel refills.</p>
 				<Button onclick={() => goto(`${base}/vehicles/new`)}>
-					{#snippet children()}Add Vehicle{/snippet}
+					{#snippet children()}Add Your Vehicle{/snippet}
 				</Button>
 			</Card.Content>
 		</Card.Root>
@@ -193,40 +207,23 @@
 				</Card.Header>
 				<Card.Content>
 					<form onsubmit={handleSubmit} class="space-y-4">
-						<!-- Vehicle selector (shown only if multiple vehicles) -->
-						{#if hasMultipleVehicles}
-							<div class="space-y-2">
-								<Label for="vehicle">Vehicle</Label>
-								<select
-									id="vehicle"
-									bind:value={vehicleId}
-									class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-								>
-									{#each vehiclesQuery.data ?? [] as v}
-										<option value={v.id}>{v.name}</option>
-									{/each}
-								</select>
-							</div>
-						{/if}
-
-						<!-- Fuel Type -->
+						<!-- Vehicle selector -->
 						<div class="space-y-2">
-							<Label for="fuelType">Fuel Type</Label>
+							<Label for="vehicle">Vehicle</Label>
 							<select
-								id="fuelType"
-								bind:value={fuelType}
+								id="vehicle"
+								bind:value={vehicleId}
 								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 							>
-								<option value="gasoline">Gasoline</option>
-								<option value="diesel">Diesel</option>
-								<option value="ev">EV</option>
-								<option value="hybrid">Hybrid</option>
+								{#each vehiclesQuery.data ?? [] as v}
+									<option value={v.id}>{v.name} ({fuelTypeLabel(v.fuelType)})</option>
+								{/each}
 							</select>
 						</div>
 
-						<!-- Quantity -->
+						<!-- Liters -->
 						<div class="space-y-2">
-							<Label for="liters">Quantity (Liters/kWh)</Label>
+							<Label for="liters">Liters</Label>
 							<Input
 								id="liters"
 								type="number"
@@ -239,7 +236,7 @@
 
 						<!-- Price per Unit -->
 						<div class="space-y-2">
-							<Label for="price">Price per Unit (&#8369;)</Label>
+							<Label for="price">Price per Liter (&#8369;)</Label>
 							<Input
 								id="price"
 								type="number"
@@ -250,22 +247,17 @@
 							{#if errors.pricePerUnit}<p class="text-sm text-destructive">{errors.pricePerUnit}</p>{/if}
 						</div>
 
-						<!-- Odometer Reading -->
-						<div class="space-y-2">
-							<Label for="odometer">Odometer Reading (km)</Label>
-							<Input
-								id="odometer"
-								type="number"
-								step="0.1"
-								placeholder="e.g. 17020"
-								bind:value={odometerKm}
-							/>
-							{#if errors.odometerKm}<p class="text-sm text-destructive">{errors.odometerKm}</p>{/if}
-						</div>
+						<!-- Total Cost (auto-calculated, shown as info) -->
+						{#if totalCost && parseFloat(totalCost) > 0}
+							<div class="rounded-md bg-muted px-4 py-3">
+								<p class="text-sm text-muted-foreground">Total Cost</p>
+								<p class="text-lg font-bold">{formatCurrency(parseFloat(totalCost))}</p>
+							</div>
+						{/if}
 
-						<!-- Date & Time -->
+						<!-- Date -->
 						<div class="space-y-2">
-							<Label for="date">Date & Time</Label>
+							<Label for="date">Date</Label>
 							<Input id="date" type="date" bind:value={date} />
 						</div>
 
@@ -278,7 +270,18 @@
 							<p class="text-sm text-destructive">{createMut.error.message}</p>
 						{/if}
 						{#if createMut.isSuccess}
-							<p class="text-sm text-green-600">Entry saved!</p>
+							<div class="rounded-lg border border-green-500/30 bg-green-500/10 p-4 space-y-3">
+								<p class="text-sm font-medium text-green-600 dark:text-green-400">Fuel log saved successfully!</p>
+								<a
+									href="{base}/live-tracking"
+									class="flex items-center justify-center gap-2 w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
+								>
+									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+										<polygon points="5 3 19 12 5 21 5 3"></polygon>
+									</svg>
+									Start Trip
+								</a>
+							</div>
 						{/if}
 					</form>
 				</Card.Content>
@@ -301,9 +304,10 @@
 						{#each fuelLogsQuery.data ?? [] as log}
 							<Card.Root class="relative">
 								<Card.Content class="p-4">
-									<!-- Top row: badge + date + delete -->
+									<!-- Top row: vehicle + badge + date + delete -->
 									<div class="flex items-center justify-between mb-3">
-										<div class="flex items-center gap-2">
+										<div class="flex items-center gap-2 flex-wrap">
+											<span class="text-sm font-semibold">{getVehicleName(log)}</span>
 											<Badge variant="outline" class="border-primary text-primary">
 												{#snippet children()}{fuelTypeLabel(getVehicleFuelType(log))}{/snippet}
 											</Badge>
@@ -331,9 +335,11 @@
 										<span class="text-foreground font-medium">
 											{log.liters ? `${log.liters.toLocaleString()} L` : '--'}
 										</span>
-										<span class="text-muted-foreground">
-											{log.odometerKm.toLocaleString()} km
-										</span>
+										{#if log.odometerKm}
+											<span class="text-muted-foreground">
+												{log.odometerKm.toLocaleString()} km
+											</span>
+										{/if}
 									</div>
 
 									<!-- Price row -->

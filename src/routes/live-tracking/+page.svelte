@@ -3,10 +3,18 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { vehiclesApi, tripLogsApi, type Vehicle } from '$lib/api.js';
+	import { getFuelPricePerLiter } from '$lib/utils.js';
+	import { db } from '$lib/db.js';
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
+	import { onMount } from 'svelte';
+	import {
+		isSupported as notifSupported,
+		sendTripUpdate,
+		endTripNotification
+	} from '$lib/notifications.js';
 
 	const queryClient = useQueryClient();
 
@@ -159,6 +167,50 @@
 		}
 	}
 
+	// --- Background Trip Notification ---
+	// When the user minimizes/backgrounds the app during an active trip,
+	// send updates to the service worker to show a persistent notification
+	// (similar to Grab / delivery apps).
+	let bgNotifInterval: ReturnType<typeof setInterval> | null = null;
+
+	function handleVisibilityChange() {
+		if (!notifSupported() || Notification.permission !== 'granted') return;
+
+		if (document.hidden && isTracking) {
+			// App just went to background — start sending updates to SW
+			pushTripToSW();
+			bgNotifInterval = setInterval(pushTripToSW, 5000);
+		} else {
+			// App came back to foreground — stop background notifications
+			if (bgNotifInterval) {
+				clearInterval(bgNotifInterval);
+				bgNotifInterval = null;
+			}
+			if (isTracking) {
+				// Dismiss the notification since user is back in the app
+				endTripNotification();
+			}
+		}
+	}
+
+	function pushTripToSW() {
+		sendTripUpdate({
+			vehicleName: selectedVehicle?.name ?? 'Vehicle',
+			distance,
+			duration: elapsedSeconds,
+			avgSpeed,
+			isTracking
+		});
+	}
+
+	onMount(() => {
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		return () => {
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			if (bgNotifInterval) clearInterval(bgNotifInterval);
+		};
+	});
+
 	// --- Derived ---
 	let drivingQuality = $derived.by(() => {
 		if (aiScore !== null) {
@@ -214,8 +266,7 @@
 		const eff = aiEfficiency ?? (elapsedSeconds > 5 ? localEfficiency : null);
 		if (!eff || eff <= 0 || distance < 0.01) return null;
 		const litersUsed = distance / eff;
-		// Default price per liter (PHP) - could be fetched from fuel logs later
-		const pricePerLiter = 59.5;
+		const pricePerLiter = getFuelPricePerLiter();
 		return litersUsed * pricePerLiter;
 	});
 
@@ -465,6 +516,15 @@
 			timerInterval = null;
 		}
 
+		// Clear background notification interval
+		if (bgNotifInterval) {
+			clearInterval(bgNotifInterval);
+			bgNotifInterval = null;
+		}
+
+		// Dismiss trip notification
+		endTripNotification();
+
 		// Clear simulation
 		stopSimulation();
 
@@ -505,6 +565,10 @@
 		saveMessage = null;
 
 		try {
+			// Estimate fuel consumed from efficiency model
+			const eff = aiEfficiency ?? localEfficiency;
+			const estFuelUsed = eff > 0 ? Math.round((distance / eff) * 1000) / 1000 : undefined;
+
 			await tripLogsApi.create({
 				vehicleId: selectedVehicleId,
 				date: new Date().toISOString().split('T')[0],
@@ -515,15 +579,28 @@
 				hardBrakingCount,
 				rapidAccelCount,
 				idleMinutes,
+				fuelConsumedLiters: estFuelUsed,
 				tripType: avgSpeed > 60 ? 'highway' : avgSpeed < 30 ? 'city' : 'mixed',
 				notes: `Live tracked trip — Score: ${qualityScore}/100`
 			});
+			// Update vehicle odometer with trip distance
+			const vehicle = vehicles.find((v) => v.id === selectedVehicleId);
+			if (vehicle) {
+				const newOdometer = (vehicle.odometerKm ?? 0) + Math.round(distance * 100) / 100;
+				await db.vehicles.update(selectedVehicleId, {
+					odometerKm: newOdometer,
+					updatedAt: new Date()
+				});
+			}
+
 			// Invalidate caches so Dashboard/Trips update immediately
 			queryClient.invalidateQueries({ queryKey: ['trip-logs'] });
 			queryClient.invalidateQueries({ queryKey: ['driving-score'] });
 			queryClient.invalidateQueries({ queryKey: ['fuel-stats'] });
 			queryClient.invalidateQueries({ queryKey: ['vehicles'] });
 			saveMessage = 'Trip saved successfully!';
+			// Navigate to Trips page to show the latest trip
+			goto(`${base}/trips`);
 		} catch (err) {
 			saveMessage = `Failed to save trip: ${err instanceof Error ? err.message : 'Unknown error'}`;
 		} finally {
@@ -565,6 +642,21 @@
 		<h1 class="text-3xl font-bold tracking-tight">Live Tracking</h1>
 		<p class="text-muted-foreground">Real-time motion sensors, GPS tracking & AI driving analysis</p>
 	</div>
+
+	{#if vehicles.length === 0}
+		<Card.Root class="border-dashed">
+			<Card.Content class="flex flex-col items-center py-12 px-6 text-center">
+				<div class="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+				</div>
+				<h3 class="font-semibold text-lg mb-1">No vehicle yet</h3>
+				<p class="text-sm text-muted-foreground mb-5">Add a vehicle first to start tracking your trips in real-time.</p>
+				<Button class="bg-emerald-500 hover:bg-emerald-600 text-white" onclick={() => goto(`${base}/vehicles/new`)}>
+					{#snippet children()}Add Your Vehicle{/snippet}
+				</Button>
+			</Card.Content>
+		</Card.Root>
+	{:else}
 
 	<!-- Controls -->
 	<div class="flex flex-wrap items-center gap-3">
@@ -1066,5 +1158,7 @@
 				</div>
 			</div>
 		</div>
+	{/if}
+
 	{/if}
 </div>

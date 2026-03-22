@@ -78,17 +78,17 @@
 	// --- Stat Card Computations ---
 	const predictedCost = $derived.by(() => {
 		const stats = statsQuery.data;
-		if (!stats || stats.totalLogs < 2) return 2613;
+		if (!stats || stats.totalLogs < 2) return null;
 		const avgCostPerLog = stats.totalCost / stats.totalLogs;
 		return Math.round(avgCostPerLog * 3);
 	});
 
 	const efficiencyTrend = $derived.by(() => {
 		const data = statsQuery.data?.efficiencyData;
-		if (!data || data.length < 2) return -9.4;
+		if (!data || data.length < 2) return null;
 		const recent = data.slice(-3);
 		const older = data.slice(-6, -3);
-		if (older.length === 0) return -9.4;
+		if (older.length === 0) return null;
 		const recentAvg = recent.reduce((s, d) => s + d.kmPerLiter, 0) / recent.length;
 		const olderAvg = older.reduce((s, d) => s + d.kmPerLiter, 0) / older.length;
 		if (olderAvg === 0) return 0;
@@ -97,19 +97,24 @@
 
 	const savingsPotential = $derived.by(() => {
 		const stats = statsQuery.data;
-		if (!stats || stats.totalCost === 0) return 2169;
+		if (!stats || stats.totalCost === 0) return null;
 		return Math.round(stats.totalCost * 0.12);
 	});
 
 	// --- Driving Score ---
-	const score = $derived(drivingScoreQuery.data?.score ?? 62);
-	const breakdown = $derived(drivingScoreQuery.data?.breakdown ?? { braking: 15, acceleration: 18, idling: 14, speed: 15 });
+	const score = $derived(drivingScoreQuery.data?.score ?? null);
+	const breakdown = $derived(drivingScoreQuery.data?.breakdown ?? null);
+
+	// Check if we have any real data to show
+	const hasData = $derived(
+		(fuelLogsQuery.data?.length ?? 0) > 0 || (tripLogsQuery.data?.length ?? 0) > 0
+	);
 
 	// Normalize breakdown values to 0-100 range (each is out of 25)
-	const brakingPct = $derived(Math.round((breakdown.braking / 25) * 100));
-	const accelPct = $derived(Math.round((breakdown.acceleration / 25) * 100));
-	const idlingPct = $derived(Math.round((breakdown.idling / 25) * 100));
-	const speedPct = $derived(Math.round((breakdown.speed / 25) * 100));
+	const brakingPct = $derived(breakdown ? Math.round((breakdown.braking / 25) * 100) : 0);
+	const accelPct = $derived(breakdown ? Math.round((breakdown.acceleration / 25) * 100) : 0);
+	const idlingPct = $derived(breakdown ? Math.round((breakdown.idling / 25) * 100) : 0);
+	const speedPct = $derived(breakdown ? Math.round((breakdown.speed / 25) * 100) : 0);
 
 	// Route efficiency is derived as average of all
 	const routeEffPct = $derived(Math.round((brakingPct + accelPct + idlingPct + speedPct) / 4));
@@ -163,7 +168,7 @@
 	const gaugeRadius = 54;
 	const gaugeStroke = 10;
 	const gaugeCircumference = 2 * Math.PI * gaugeRadius;
-	const gaugeDashoffset = $derived(gaugeCircumference * (1 - score / 100));
+	const gaugeDashoffset = $derived(gaugeCircumference * (1 - (score ?? 0) / 100));
 
 	function scoreColor(s: number): string {
 		if (s >= 80) return '#22c55e';
@@ -172,71 +177,55 @@
 		return '#ef4444';
 	}
 
-	// --- Alert/Recommendation Cards ---
-	interface AlertCard {
-		title: string;
-		description: string;
-		borderColor: string;
-		bgColor: string;
-		iconColor: string;
-		icon: string; // SVG path or symbol
-		type: 'warning' | 'info' | 'success' | 'alert';
-	}
+	// --- Dynamic Alert Cards from trip data ---
+	const alertCards = $derived.by(() => {
+		const trips = tripLogsQuery.data;
+		if (!trips || trips.length === 0) return [];
 
-	const alertCards: AlertCard[] = [
-		{
-			title: 'Hard Braking Detected',
-			description: 'You had 12 hard braking events this week. Try to anticipate stops earlier to reduce brake wear and improve fuel efficiency by up to 3%.',
-			borderColor: 'border-l-red-500',
-			bgColor: 'bg-red-50 dark:bg-red-950/20',
-			iconColor: 'text-red-500',
-			icon: 'warning',
-			type: 'warning'
-		},
-		{
-			title: 'Optimal Speed Recommendation',
-			description: 'Your highway trips average 105 km/h. Reducing to 90 km/h could improve fuel efficiency by 15% and save approximately ₱340/month.',
-			borderColor: 'border-l-blue-500',
-			bgColor: 'bg-blue-50 dark:bg-blue-950/20',
-			iconColor: 'text-blue-500',
-			icon: 'info',
-			type: 'info'
-		},
-		{
-			title: 'Improvement Detected',
-			description: 'Your smooth braking score improved by 8% compared to last week. Keep up the great driving habits!',
-			borderColor: 'border-l-green-500',
-			bgColor: 'bg-green-50 dark:bg-green-950/20',
-			iconColor: 'text-green-500',
-			icon: 'success',
-			type: 'success'
-		},
-		{
-			title: 'Rapid Acceleration Alert',
-			description: 'Rapid acceleration was detected 8 times today. Gradual acceleration can save up to 5% on fuel costs.',
-			borderColor: 'border-l-orange-500',
-			bgColor: 'bg-orange-50 dark:bg-orange-950/20',
-			iconColor: 'text-orange-500',
-			icon: 'alert',
-			type: 'alert'
+		const alerts: { title: string; description: string; borderColor: string; bgColor: string; iconColor: string }[] = [];
+		const recentTrips = trips.slice(0, 7);
+		const totalBraking = recentTrips.reduce((s, t) => s + t.hardBrakingCount, 0);
+		const totalAccel = recentTrips.reduce((s, t) => s + t.rapidAccelCount, 0);
+
+		if (totalBraking > 5) {
+			alerts.push({
+				title: 'Hard Braking Detected',
+				description: `You had ${totalBraking} hard braking events in your last ${recentTrips.length} trips. Try to anticipate stops earlier to improve fuel efficiency.`,
+				borderColor: 'border-l-red-500', bgColor: 'bg-red-50 dark:bg-red-950/20', iconColor: 'text-red-500'
+			});
 		}
-	];
+		if (totalAccel > 5) {
+			alerts.push({
+				title: 'Rapid Acceleration Alert',
+				description: `Rapid acceleration was detected ${totalAccel} times recently. Gradual acceleration can save up to 5% on fuel costs.`,
+				borderColor: 'border-l-orange-500', bgColor: 'bg-orange-50 dark:bg-orange-950/20', iconColor: 'text-orange-500'
+			});
+		}
+
+		const avgSpeed = recentTrips.filter(t => t.avgSpeedKmh).reduce((s, t) => s + (t.avgSpeedKmh ?? 0), 0) / (recentTrips.filter(t => t.avgSpeedKmh).length || 1);
+		if (avgSpeed > 90) {
+			alerts.push({
+				title: 'Optimal Speed Recommendation',
+				description: `Your recent trips average ${Math.round(avgSpeed)} km/h. Reducing to 80-90 km/h could improve fuel efficiency by up to 15%.`,
+				borderColor: 'border-l-blue-500', bgColor: 'bg-blue-50 dark:bg-blue-950/20', iconColor: 'text-blue-500'
+			});
+		}
+
+		if (totalBraking <= 3 && totalAccel <= 3 && recentTrips.length >= 3) {
+			alerts.push({
+				title: 'Great Driving!',
+				description: 'Your recent driving has been smooth with minimal hard braking and rapid acceleration. Keep it up!',
+				borderColor: 'border-l-green-500', bgColor: 'bg-green-50 dark:bg-green-950/20', iconColor: 'text-green-500'
+			});
+		}
+
+		return alerts;
+	});
 
 	// --- Driving Behavior Trends (line chart data) ---
 	const behaviorTrendData = $derived.by(() => {
 		const trips = tripLogsQuery.data;
-		if (!trips || trips.length === 0) {
-			// Placeholder data
-			return [
-				{ label: 'Mon', braking: 4, accel: 3 },
-				{ label: 'Tue', braking: 6, accel: 5 },
-				{ label: 'Wed', braking: 3, accel: 7 },
-				{ label: 'Thu', braking: 8, accel: 4 },
-				{ label: 'Fri', braking: 5, accel: 6 },
-				{ label: 'Sat', braking: 2, accel: 3 },
-				{ label: 'Sun', braking: 7, accel: 8 }
-			];
-		}
+		if (!trips || trips.length === 0) return [];
 		const recent = trips.slice(0, 7).reverse();
 		return recent.map((t) => ({
 			label: t.date.slice(5),
@@ -268,15 +257,7 @@
 	// --- AI Prediction vs Actual (bar chart) ---
 	const predVsActualData = $derived.by(() => {
 		const logs = fuelLogsQuery.data;
-		if (!logs || logs.length === 0) {
-			return [
-				{ label: 'Jan', actual: 2800, predicted: 2650 },
-				{ label: 'Feb', actual: 3100, predicted: 2900 },
-				{ label: 'Mar', actual: 2600, predicted: 2750 },
-				{ label: 'Apr', actual: 2950, predicted: 2800 },
-				{ label: 'May', actual: 3200, predicted: 3000 }
-			];
-		}
+		if (!logs || logs.length === 0) return [];
 		// Group fuel logs by month and compute actual vs a simple predicted
 		const byMonth = new Map<string, number>();
 		for (const log of logs) {
@@ -437,7 +418,7 @@
 					<path d="M12 6v-2M12 20v-2M6 12H4M20 12h-2" stroke-linecap="round" />
 				</svg>
 			</div>
-			<div class="text-3xl font-bold mb-1">₱{formatCurrency(predictedCost)}</div>
+			<div class="text-3xl font-bold mb-1">{predictedCost != null ? `₱${formatCurrency(predictedCost)}` : '--'}</div>
 			<p class="text-sm opacity-80">Expected cost for next 3 refuels</p>
 		</div>
 
@@ -450,8 +431,8 @@
 					<polyline points="17 6 23 6 23 12" stroke-linecap="round" stroke-linejoin="round" />
 				</svg>
 			</div>
-			<div class="text-3xl font-bold mb-1">{efficiencyTrend > 0 ? '+' : ''}{efficiencyTrend}%</div>
-			<p class="text-sm opacity-80">{efficiencyTrend < 0 ? 'Down' : 'Up'} vs last month</p>
+			<div class="text-3xl font-bold mb-1">{efficiencyTrend != null ? `${efficiencyTrend > 0 ? '+' : ''}${efficiencyTrend}%` : '--'}</div>
+			<p class="text-sm opacity-80">{efficiencyTrend != null && efficiencyTrend < 0 ? 'Down' : efficiencyTrend != null ? 'Up' : 'Not enough data'} vs last month</p>
 		</div>
 
 		<!-- Savings Potential (Green) -->
@@ -462,352 +443,220 @@
 					<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" stroke-linecap="round" stroke-linejoin="round" />
 				</svg>
 			</div>
-			<div class="text-3xl font-bold mb-1">₱{formatCurrency(savingsPotential)}</div>
+			<div class="text-3xl font-bold mb-1">{savingsPotential != null ? `₱${formatCurrency(savingsPotential)}` : '--'}</div>
 			<p class="text-sm opacity-80">Possible savings with optimization</p>
 		</div>
 	</div>
 
-	<!-- Fuel Efficiency Score Section -->
-	<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-		<!-- Radar Chart -->
-		<Card.Root>
-			<Card.Header>
-				<Card.Title>Fuel Efficiency Score</Card.Title>
-				<Card.Description>Performance across 5 driving dimensions</Card.Description>
-			</Card.Header>
-			<Card.Content>
-				<div class="flex justify-center">
-					<svg viewBox="0 0 300 280" class="w-full max-w-[380px]">
-						<!-- Grid rings -->
-						{#each [25, 50, 75, 100] as level}
-							<polygon
-								points={radarGridPoints(level)}
-								fill="none"
-								stroke="currentColor"
-								class="text-muted-foreground/20"
-								stroke-width="1"
-							/>
-						{/each}
-
-						<!-- Axis lines -->
-						{#each Array.from({ length: 5 }) as _, i}
-							{@const p = radarPoint(i, 100)}
-							<line
-								x1={radarCx}
-								y1={radarCy}
-								x2={p.x}
-								y2={p.y}
-								stroke="currentColor"
-								class="text-muted-foreground/20"
-								stroke-width="1"
-							/>
-						{/each}
-
-						<!-- Data polygon -->
-						<polygon
-							points={radarDataPoints}
-							fill="rgba(99, 102, 241, 0.25)"
-							stroke="rgb(99, 102, 241)"
-							stroke-width="2"
-						/>
-
-						<!-- Data points -->
-						{#each radarAxes as axis, i}
-							{@const p = radarPoint(i, axis.value)}
-							<circle cx={p.x} cy={p.y} r="4" fill="rgb(99, 102, 241)" />
-						{/each}
-
-						<!-- Labels -->
-						{#each radarAxes as axis, i}
-							{@const lp = radarLabelPos(i)}
-							<text
-								x={lp.x}
-								y={lp.y}
-								text-anchor="middle"
-								dominant-baseline="middle"
-								class="fill-current text-muted-foreground"
-								font-size="11"
-							>
-								{axis.label}
-							</text>
-						{/each}
-					</svg>
-				</div>
-			</Card.Content>
-		</Card.Root>
-
-		<!-- Overall Score -->
-		<Card.Root>
-			<Card.Header>
-				<Card.Title>Overall Score</Card.Title>
-				<Card.Description>Composite driving efficiency rating</Card.Description>
-			</Card.Header>
-			<Card.Content>
-				<div class="flex flex-col items-center gap-6">
-					<!-- Circular gauge -->
-					<div class="relative">
-						<svg width="140" height="140" viewBox="0 0 140 140">
-							<!-- Background circle -->
-							<circle
-								cx="70"
-								cy="70"
-								r={gaugeRadius}
-								fill="none"
-								stroke="currentColor"
-								class="text-muted/20"
-								stroke-width={gaugeStroke}
-								transform="rotate(-90 70 70)"
-							/>
-							<!-- Score arc -->
-							<circle
-								cx="70"
-								cy="70"
-								r={gaugeRadius}
-								fill="none"
-								stroke={scoreColor(score)}
-								stroke-width={gaugeStroke}
-								stroke-dasharray={gaugeCircumference}
-								stroke-dashoffset={gaugeDashoffset}
-								stroke-linecap="round"
-								transform="rotate(-90 70 70)"
-								style="transition: stroke-dashoffset 0.8s ease-out"
-							/>
-						</svg>
-						<div class="absolute inset-0 flex flex-col items-center justify-center">
-							<span class="text-4xl font-bold" style="color: {scoreColor(score)}">{score}</span>
-							<span class="text-xs text-muted-foreground">/100</span>
+	{#if hasData}
+		<!-- Fuel Efficiency Score Section -->
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			<!-- Radar Chart -->
+			<Card.Root>
+				<Card.Header>
+					<Card.Title>Fuel Efficiency Score</Card.Title>
+					<Card.Description>Performance across 5 driving dimensions</Card.Description>
+				</Card.Header>
+				<Card.Content>
+					{#if score != null}
+						<div class="flex justify-center">
+							<svg viewBox="0 0 300 280" class="w-full max-w-[380px]">
+								{#each [25, 50, 75, 100] as level}
+									<polygon points={radarGridPoints(level)} fill="none" stroke="currentColor" class="text-muted-foreground/20" stroke-width="1" />
+								{/each}
+								{#each Array.from({ length: 5 }) as _, i}
+									{@const p = radarPoint(i, 100)}
+									<line x1={radarCx} y1={radarCy} x2={p.x} y2={p.y} stroke="currentColor" class="text-muted-foreground/20" stroke-width="1" />
+								{/each}
+								<polygon points={radarDataPoints} fill="rgba(99, 102, 241, 0.25)" stroke="rgb(99, 102, 241)" stroke-width="2" />
+								{#each radarAxes as axis, i}
+									{@const p = radarPoint(i, axis.value)}
+									<circle cx={p.x} cy={p.y} r="4" fill="rgb(99, 102, 241)" />
+								{/each}
+								{#each radarAxes as axis, i}
+									{@const lp = radarLabelPos(i)}
+									<text x={lp.x} y={lp.y} text-anchor="middle" dominant-baseline="middle" class="fill-current text-muted-foreground" font-size="11">{axis.label}</text>
+								{/each}
+							</svg>
 						</div>
-					</div>
+					{:else}
+						<div class="flex items-center justify-center h-48 text-muted-foreground text-sm">
+							Start tracking trips to see your driving score
+						</div>
+					{/if}
+				</Card.Content>
+			</Card.Root>
 
-					<!-- Score detail bars -->
-					<div class="w-full space-y-3">
-						<div>
-							<div class="flex justify-between text-sm mb-1">
-								<span class="text-muted-foreground">Smooth Braking</span>
-								<span class="font-medium">{brakingPct}%</span>
-							</div>
-							<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden">
-								<div class="h-full bg-blue-500 rounded-full transition-all duration-700" style="width: {brakingPct}%"></div>
-							</div>
-						</div>
-						<div>
-							<div class="flex justify-between text-sm mb-1">
-								<span class="text-muted-foreground">Acceleration</span>
-								<span class="font-medium">{accelPct}%</span>
-							</div>
-							<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden">
-								<div class="h-full bg-green-500 rounded-full transition-all duration-700" style="width: {accelPct}%"></div>
-							</div>
-						</div>
-						<div>
-							<div class="flex justify-between text-sm mb-1">
-								<span class="text-muted-foreground">Route Efficiency</span>
-								<span class="font-medium">{routeEffPct}%</span>
-							</div>
-							<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden">
-								<div class="h-full bg-purple-500 rounded-full transition-all duration-700" style="width: {routeEffPct}%"></div>
-							</div>
-						</div>
-						<div>
-							<div class="flex justify-between text-sm mb-1">
-								<span class="text-muted-foreground">Idle Time</span>
-								<span class="font-medium">{idlingPct}%</span>
-							</div>
-							<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden">
-								<div class="h-full bg-orange-500 rounded-full transition-all duration-700" style="width: {idlingPct}%"></div>
-							</div>
-						</div>
-					</div>
-				</div>
-			</Card.Content>
-		</Card.Root>
-	</div>
-
-	<!-- Alert/Recommendation Cards -->
-	<div>
-		<h2 class="text-xl font-semibold mb-4">Alerts & Recommendations</h2>
-		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-			{#each alertCards as alert}
-				<div class="rounded-lg border-l-4 {alert.borderColor} {alert.bgColor} p-4 shadow-sm">
-					<div class="flex items-start gap-3">
-						<div class="shrink-0 mt-0.5">
-							{#if alert.icon === 'warning'}
-								<svg class="w-5 h-5 {alert.iconColor}" viewBox="0 0 24 24" fill="currentColor">
-									<path d="M12 2L1 21h22L12 2zm0 4l7.53 13H4.47L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z" />
+			<!-- Overall Score -->
+			<Card.Root>
+				<Card.Header>
+					<Card.Title>Overall Score</Card.Title>
+					<Card.Description>Composite driving efficiency rating</Card.Description>
+				</Card.Header>
+				<Card.Content>
+					{#if score != null}
+						<div class="flex flex-col items-center gap-6">
+							<div class="relative">
+								<svg width="140" height="140" viewBox="0 0 140 140">
+									<circle cx="70" cy="70" r={gaugeRadius} fill="none" stroke="currentColor" class="text-muted/20" stroke-width={gaugeStroke} transform="rotate(-90 70 70)" />
+									<circle cx="70" cy="70" r={gaugeRadius} fill="none" stroke={scoreColor(score)} stroke-width={gaugeStroke} stroke-dasharray={gaugeCircumference} stroke-dashoffset={gaugeDashoffset} stroke-linecap="round" transform="rotate(-90 70 70)" style="transition: stroke-dashoffset 0.8s ease-out" />
 								</svg>
-							{:else if alert.icon === 'info'}
-								<svg class="w-5 h-5 {alert.iconColor}" viewBox="0 0 24 24" fill="currentColor">
-									<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
-								</svg>
-							{:else if alert.icon === 'success'}
-								<svg class="w-5 h-5 {alert.iconColor}" viewBox="0 0 24 24" fill="currentColor">
-									<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-								</svg>
-							{:else}
-								<svg class="w-5 h-5 {alert.iconColor}" viewBox="0 0 24 24" fill="currentColor">
-									<path d="M12 2L1 21h22L12 2zm0 4l7.53 13H4.47L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z" />
-								</svg>
-							{/if}
+								<div class="absolute inset-0 flex flex-col items-center justify-center">
+									<span class="text-4xl font-bold" style="color: {scoreColor(score)}">{score}</span>
+									<span class="text-xs text-muted-foreground">/100</span>
+								</div>
+							</div>
+							<div class="w-full space-y-3">
+								<div>
+									<div class="flex justify-between text-sm mb-1"><span class="text-muted-foreground">Smooth Braking</span><span class="font-medium">{brakingPct}%</span></div>
+									<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden"><div class="h-full bg-blue-500 rounded-full transition-all duration-700" style="width: {brakingPct}%"></div></div>
+								</div>
+								<div>
+									<div class="flex justify-between text-sm mb-1"><span class="text-muted-foreground">Acceleration</span><span class="font-medium">{accelPct}%</span></div>
+									<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden"><div class="h-full bg-green-500 rounded-full transition-all duration-700" style="width: {accelPct}%"></div></div>
+								</div>
+								<div>
+									<div class="flex justify-between text-sm mb-1"><span class="text-muted-foreground">Route Efficiency</span><span class="font-medium">{routeEffPct}%</span></div>
+									<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden"><div class="h-full bg-purple-500 rounded-full transition-all duration-700" style="width: {routeEffPct}%"></div></div>
+								</div>
+								<div>
+									<div class="flex justify-between text-sm mb-1"><span class="text-muted-foreground">Idle Time</span><span class="font-medium">{idlingPct}%</span></div>
+									<div class="h-2.5 bg-muted/30 rounded-full overflow-hidden"><div class="h-full bg-orange-500 rounded-full transition-all duration-700" style="width: {idlingPct}%"></div></div>
+								</div>
+							</div>
 						</div>
-						<div>
-							<h3 class="font-semibold text-sm">{alert.title}</h3>
-							<p class="text-sm text-muted-foreground mt-1">{alert.description}</p>
+					{:else}
+						<div class="flex items-center justify-center h-48 text-muted-foreground text-sm">
+							No driving data yet
 						</div>
-					</div>
-				</div>
-			{/each}
+					{/if}
+				</Card.Content>
+			</Card.Root>
 		</div>
-	</div>
 
-	<!-- Charts Row -->
-	<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-		<!-- Driving Behavior Trends (Line Chart) -->
-		<Card.Root>
-			<Card.Header>
-				<Card.Title>Driving Behavior Trends</Card.Title>
-				<Card.Description>Hard braking and rapid acceleration events over time</Card.Description>
-			</Card.Header>
-			<Card.Content>
-				<div class="relative">
-					<svg viewBox="0 0 400 200" class="w-full" preserveAspectRatio="xMidYMid meet">
-						<!-- Y-axis grid lines -->
-						{#each [0, 0.25, 0.5, 0.75, 1] as frac}
-							{@const y = 20 + 160 * (1 - frac)}
-							<line x1="40" y1={y} x2="360" y2={y} stroke="currentColor" class="text-muted-foreground/15" stroke-width="1" />
-							<text x="32" y={y + 4} text-anchor="end" class="fill-current text-muted-foreground" font-size="10">
-								{Math.round(behaviorMax * frac)}
-							</text>
-						{/each}
-
-						<!-- X-axis labels -->
-						{#each behaviorTrendData as d, i}
-							{@const x = 40 + (i / Math.max(behaviorTrendData.length - 1, 1)) * 320}
-							<text x={x} y="195" text-anchor="middle" class="fill-current text-muted-foreground" font-size="10">
-								{d.label}
-							</text>
-						{/each}
-
-						<!-- Hard Braking line (red) -->
-						<polyline
-							points={lineChartPoints(behaviorTrendData, 'braking')}
-							fill="none"
-							stroke="#ef4444"
-							stroke-width="2.5"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						/>
-						<!-- Braking dots -->
-						{#each behaviorTrendData as d, i}
-							{@const x = 40 + (i / Math.max(behaviorTrendData.length - 1, 1)) * 320}
-							{@const y = 20 + 160 - (d.braking / behaviorMax) * 160}
-							<circle cx={x} cy={y} r="3.5" fill="#ef4444" />
-						{/each}
-
-						<!-- Rapid Accel line (orange) -->
-						<polyline
-							points={lineChartPoints(behaviorTrendData, 'accel')}
-							fill="none"
-							stroke="#f97316"
-							stroke-width="2.5"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						/>
-						<!-- Accel dots -->
-						{#each behaviorTrendData as d, i}
-							{@const x = 40 + (i / Math.max(behaviorTrendData.length - 1, 1)) * 320}
-							{@const y = 20 + 160 - (d.accel / behaviorMax) * 160}
-							<circle cx={x} cy={y} r="3.5" fill="#f97316" />
-						{/each}
-					</svg>
-
-					<!-- Legend -->
-					<div class="flex items-center justify-center gap-6 mt-2">
-						<div class="flex items-center gap-1.5">
-							<span class="w-3 h-3 rounded-full bg-red-500"></span>
-							<span class="text-xs text-muted-foreground">Hard Braking</span>
+		<!-- Alert/Recommendation Cards -->
+		{#if alertCards.length > 0}
+			<div>
+				<h2 class="text-xl font-semibold mb-4">Alerts & Recommendations</h2>
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					{#each alertCards as alert}
+						<div class="rounded-lg border-l-4 {alert.borderColor} {alert.bgColor} p-4 shadow-sm">
+							<div class="flex items-start gap-3">
+								<div class="shrink-0 mt-0.5">
+									<svg class="w-5 h-5 {alert.iconColor}" viewBox="0 0 24 24" fill="currentColor">
+										<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+									</svg>
+								</div>
+								<div>
+									<h3 class="font-semibold text-sm">{alert.title}</h3>
+									<p class="text-sm text-muted-foreground mt-1">{alert.description}</p>
+								</div>
+							</div>
 						</div>
-						<div class="flex items-center gap-1.5">
-							<span class="w-3 h-3 rounded-full bg-orange-500"></span>
-							<span class="text-xs text-muted-foreground">Rapid Accel</span>
-						</div>
-					</div>
+					{/each}
 				</div>
+			</div>
+		{/if}
+
+		<!-- Charts Row -->
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			<!-- Driving Behavior Trends (Line Chart) -->
+			<Card.Root>
+				<Card.Header>
+					<Card.Title>Driving Behavior Trends</Card.Title>
+					<Card.Description>Hard braking and rapid acceleration events over time</Card.Description>
+				</Card.Header>
+				<Card.Content>
+					{#if behaviorTrendData.length > 1}
+						<div class="relative">
+							<svg viewBox="0 0 400 200" class="w-full" preserveAspectRatio="xMidYMid meet">
+								{#each [0, 0.25, 0.5, 0.75, 1] as frac}
+									{@const y = 20 + 160 * (1 - frac)}
+									<line x1="40" y1={y} x2="360" y2={y} stroke="currentColor" class="text-muted-foreground/15" stroke-width="1" />
+									<text x="32" y={y + 4} text-anchor="end" class="fill-current text-muted-foreground" font-size="10">{Math.round(behaviorMax * frac)}</text>
+								{/each}
+								{#each behaviorTrendData as d, i}
+									{@const x = 40 + (i / Math.max(behaviorTrendData.length - 1, 1)) * 320}
+									<text x={x} y="195" text-anchor="middle" class="fill-current text-muted-foreground" font-size="10">{d.label}</text>
+								{/each}
+								<polyline points={lineChartPoints(behaviorTrendData, 'braking')} fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+								{#each behaviorTrendData as d, i}
+									{@const x = 40 + (i / Math.max(behaviorTrendData.length - 1, 1)) * 320}
+									{@const y = 20 + 160 - (d.braking / behaviorMax) * 160}
+									<circle cx={x} cy={y} r="3.5" fill="#ef4444" />
+								{/each}
+								<polyline points={lineChartPoints(behaviorTrendData, 'accel')} fill="none" stroke="#f97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+								{#each behaviorTrendData as d, i}
+									{@const x = 40 + (i / Math.max(behaviorTrendData.length - 1, 1)) * 320}
+									{@const y = 20 + 160 - (d.accel / behaviorMax) * 160}
+									<circle cx={x} cy={y} r="3.5" fill="#f97316" />
+								{/each}
+							</svg>
+							<div class="flex items-center justify-center gap-6 mt-2">
+								<div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-red-500"></span><span class="text-xs text-muted-foreground">Hard Braking</span></div>
+								<div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-orange-500"></span><span class="text-xs text-muted-foreground">Rapid Accel</span></div>
+							</div>
+						</div>
+					{:else}
+						<div class="flex items-center justify-center h-48 text-muted-foreground text-sm">Not enough trip data for chart</div>
+					{/if}
+				</Card.Content>
+			</Card.Root>
+
+			<!-- AI Prediction vs Actual (Bar Chart) -->
+			<Card.Root>
+				<Card.Header>
+					<Card.Title>AI Prediction vs Actual</Card.Title>
+					<Card.Description>Comparing predicted and actual fuel costs</Card.Description>
+				</Card.Header>
+				<Card.Content>
+					{#if predVsActualData.length > 0}
+						<div class="relative">
+							<svg viewBox="0 0 400 200" class="w-full" preserveAspectRatio="xMidYMid meet">
+								{#each [0, 0.25, 0.5, 0.75, 1] as frac}
+									{@const y = 20 + 150 * (1 - frac)}
+									<line x1="45" y1={y} x2="380" y2={y} stroke="currentColor" class="text-muted-foreground/15" stroke-width="1" />
+									<text x="40" y={y + 4} text-anchor="end" class="fill-current text-muted-foreground" font-size="9">₱{formatCurrency(Math.round(barMax * frac))}</text>
+								{/each}
+								{#each predVsActualData as d, i}
+									{@const groupWidth = (335 / predVsActualData.length)}
+									{@const barWidth = groupWidth * 0.35}
+									{@const groupX = 50 + i * groupWidth}
+									{@const actualH = (d.actual / barMax) * 150}
+									{@const predictedH = (d.predicted / barMax) * 150}
+									<rect x={groupX} y={170 - actualH} width={barWidth} height={actualH} rx="3" fill="#14b8a6" />
+									<rect x={groupX + barWidth + 3} y={170 - predictedH} width={barWidth} height={predictedH} rx="3" fill="#8b5cf6" />
+									<text x={groupX + barWidth + 1} y="185" text-anchor="middle" class="fill-current text-muted-foreground" font-size="10">{d.label}</text>
+								{/each}
+							</svg>
+							<div class="flex items-center justify-center gap-6 mt-2">
+								<div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-teal-500"></span><span class="text-xs text-muted-foreground">Actual Cost</span></div>
+								<div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-violet-500"></span><span class="text-xs text-muted-foreground">Predicted</span></div>
+							</div>
+						</div>
+					{:else}
+						<div class="flex items-center justify-center h-48 text-muted-foreground text-sm">Not enough fuel log data for chart</div>
+					{/if}
+				</Card.Content>
+			</Card.Root>
+		</div>
+	{:else}
+		<!-- No data empty state -->
+		<Card.Root class="border-dashed">
+			<Card.Content class="flex flex-col items-center py-16 px-6 text-center">
+				<div class="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-4">
+					<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground">
+						<path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.997.398-.997.95v8a1 1 0 0 0 1 1z"/>
+						<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/>
+					</svg>
+				</div>
+				<h3 class="font-semibold text-lg mb-1">No data yet</h3>
+				<p class="text-sm text-muted-foreground mb-5 max-w-sm">
+					Start tracking trips and logging fuel to unlock AI-powered insights about your driving and fuel efficiency.
+				</p>
 			</Card.Content>
 		</Card.Root>
-
-		<!-- AI Prediction vs Actual (Bar Chart) -->
-		<Card.Root>
-			<Card.Header>
-				<Card.Title>AI Prediction vs Actual</Card.Title>
-				<Card.Description>Comparing predicted and actual fuel costs</Card.Description>
-			</Card.Header>
-			<Card.Content>
-				<div class="relative">
-					<svg viewBox="0 0 400 200" class="w-full" preserveAspectRatio="xMidYMid meet">
-						<!-- Y-axis grid lines -->
-						{#each [0, 0.25, 0.5, 0.75, 1] as frac}
-							{@const y = 20 + 150 * (1 - frac)}
-							<line x1="45" y1={y} x2="380" y2={y} stroke="currentColor" class="text-muted-foreground/15" stroke-width="1" />
-							<text x="40" y={y + 4} text-anchor="end" class="fill-current text-muted-foreground" font-size="9">
-								₱{formatCurrency(Math.round(barMax * frac))}
-							</text>
-						{/each}
-
-						<!-- Bars -->
-						{#each predVsActualData as d, i}
-							{@const groupWidth = (335 / predVsActualData.length)}
-							{@const barWidth = groupWidth * 0.35}
-							{@const groupX = 50 + i * groupWidth}
-							{@const actualH = (d.actual / barMax) * 150}
-							{@const predictedH = (d.predicted / barMax) * 150}
-
-							<!-- Actual bar (teal) -->
-							<rect
-								x={groupX}
-								y={170 - actualH}
-								width={barWidth}
-								height={actualH}
-								rx="3"
-								fill="#14b8a6"
-							/>
-							<!-- Predicted bar (purple) -->
-							<rect
-								x={groupX + barWidth + 3}
-								y={170 - predictedH}
-								width={barWidth}
-								height={predictedH}
-								rx="3"
-								fill="#8b5cf6"
-							/>
-
-							<!-- Label -->
-							<text
-								x={groupX + barWidth + 1}
-								y="185"
-								text-anchor="middle"
-								class="fill-current text-muted-foreground"
-								font-size="10"
-							>
-								{d.label}
-							</text>
-						{/each}
-					</svg>
-
-					<!-- Legend -->
-					<div class="flex items-center justify-center gap-6 mt-2">
-						<div class="flex items-center gap-1.5">
-							<span class="w-3 h-3 rounded-sm bg-teal-500"></span>
-							<span class="text-xs text-muted-foreground">Actual Cost</span>
-						</div>
-						<div class="flex items-center gap-1.5">
-							<span class="w-3 h-3 rounded-sm bg-violet-500"></span>
-							<span class="text-xs text-muted-foreground">Predicted</span>
-						</div>
-					</div>
-				</div>
-			</Card.Content>
-		</Card.Root>
-	</div>
+	{/if}
 
 	<!-- Personalized Optimization Tips -->
 	<div>

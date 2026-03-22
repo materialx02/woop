@@ -1,370 +1,558 @@
 <script lang="ts">
-	import { base } from '$app/paths';
-	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-	import { vehiclesApi, tripLogsApi } from '$lib/api.js';
-	import { tripLogSchema, type TripLogInput } from '$lib/validators.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { vehiclesApi, tripLogsApi, type DrivingScore } from '$lib/api.js';
 	import type { Vehicle, TripLog } from '$lib/api.js';
 	import * as Card from '$lib/components/ui/card/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
-	import { goto } from '$app/navigation';
-
-	const queryClient = useQueryClient();
+	import { getFuelPricePerLiter } from '$lib/utils.js';
 
 	const vehiclesQuery = createQuery<Vehicle[]>(() => ({
 		queryKey: ['vehicles'],
 		queryFn: vehiclesApi.list
 	}));
 
-	let vehicleId = $state('');
-	let date = $state(new Date().toISOString().split('T')[0]);
-	let startOdometer = $state('');
-	let endOdometer = $state('');
-	let fuelConsumedLiters = $state('');
-	let durationMinutes = $state('');
-	let errors = $state<Record<string, string>>({});
-
-	// Auto-select first vehicle
-	$effect(() => {
-		if (vehiclesQuery.data?.length && !vehicleId) {
-			vehicleId = vehiclesQuery.data[0].id;
-		}
-	});
-
-	// Computed distance from odometer readings
-	const computedDistanceKm = $derived(() => {
-		const s = parseFloat(startOdometer);
-		const e = parseFloat(endOdometer);
-		if (s > 0 && e > s) return e - s;
-		return 0;
-	});
-
 	const tripLogsQuery = createQuery<TripLog[]>(() => ({
-		queryKey: ['trip-logs', vehicleId],
-		queryFn: () => tripLogsApi.list(vehicleId || undefined),
-		enabled: !!vehicleId
+		queryKey: ['trip-logs'],
+		queryFn: () => tripLogsApi.list()
 	}));
 
-	const createMut = createMutation(() => ({
-		mutationFn: (data: TripLogInput) => tripLogsApi.create(data),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['trip-logs'] });
-			queryClient.invalidateQueries({ queryKey: ['driving-score'] });
-			startOdometer = '';
-			endOdometer = '';
-			fuelConsumedLiters = '';
-			durationMinutes = '';
+	// Fetch driving score per vehicle
+	const allScores = $derived.by(() => {
+		if (!vehiclesQuery.data?.length) return new Map<string, DrivingScore>();
+		return new Map<string, DrivingScore>();
+	});
+
+	// We'll compute scores inline from trip data since drivingScore API is per-vehicle
+	// Build a map of vehicleId -> aggregated stats
+	const vehicleStats = $derived.by(() => {
+		const trips = tripLogsQuery.data ?? [];
+		const vehicles = vehiclesQuery.data ?? [];
+		const map = new Map<string, {
+			vehicle: Vehicle;
+			trips: TripLog[];
+			totalBraking: number;
+			totalAccel: number;
+			totalIdle: number;
+			totalEvents: number;
+			totalDistance: number;
+			totalDuration: number;
+		}>();
+
+		for (const v of vehicles) {
+			map.set(v.id, {
+				vehicle: v,
+				trips: [],
+				totalBraking: 0,
+				totalAccel: 0,
+				totalIdle: 0,
+				totalEvents: 0,
+				totalDistance: 0,
+				totalDuration: 0
+			});
 		}
-	}));
 
-	const deleteMut = createMutation(() => ({
-		mutationFn: (id: string) => tripLogsApi.delete(id),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['trip-logs'] });
-			queryClient.invalidateQueries({ queryKey: ['driving-score'] });
-		}
-	}));
-
-	function handleSubmit(e: SubmitEvent) {
-		e.preventDefault();
-		errors = {};
-
-		const distance = computedDistanceKm();
-		if (distance <= 0) {
-			errors['distanceKm'] = 'End odometer must be greater than start odometer';
-			return;
-		}
-
-		const dur = durationMinutes ? parseFloat(durationMinutes) : undefined;
-		const avgSpeed = dur && dur > 0 ? parseFloat(((distance / dur) * 60).toFixed(1)) : undefined;
-
-		const data = {
-			vehicleId,
-			date,
-			distanceKm: distance,
-			durationMinutes: dur,
-			avgSpeedKmh: avgSpeed,
-			hardBrakingCount: 0,
-			rapidAccelCount: 0,
-			idleMinutes: 0,
-			fuelConsumedLiters: fuelConsumedLiters ? parseFloat(fuelConsumedLiters) : undefined,
-			tripType: 'manual' as const,
-			notes: startOdometer && endOdometer ? `Odometer: ${formatNumber(parseFloat(startOdometer))} → ${formatNumber(parseFloat(endOdometer))} km` : undefined
-		};
-
-		const result = tripLogSchema.safeParse(data);
-		if (!result.success) {
-			for (const issue of result.error.issues) {
-				const path = issue.path.join('.');
-				errors[path] = issue.message;
+		for (const t of trips) {
+			const entry = map.get(t.vehicleId);
+			if (entry) {
+				entry.trips.push(t);
+				entry.totalBraking += t.hardBrakingCount;
+				entry.totalAccel += t.rapidAccelCount;
+				entry.totalIdle += t.idleMinutes;
+				entry.totalEvents += t.hardBrakingCount + t.rapidAccelCount;
+				entry.totalDistance += t.distanceKm;
+				entry.totalDuration += t.durationMinutes ?? 0;
 			}
-			return;
 		}
 
-		createMut.mutate(result.data);
-	}
+		return map;
+	});
 
-	function getEfficiency(trip: TripLog): number | null {
-		if (trip.fuelConsumedLiters && trip.fuelConsumedLiters > 0) {
-			return trip.distanceKm / trip.fuelConsumedLiters;
+	// Per-trip rows sorted newest first
+	const tripRows = $derived.by(() => {
+		const trips = tripLogsQuery.data ?? [];
+		const vehicles = vehiclesQuery.data ?? [];
+		const vehicleMap = new Map(vehicles.map((v) => [v.id, v]));
+
+		return trips.map((t) => {
+			const vehicle = vehicleMap.get(t.vehicleId);
+			return {
+				...t,
+				vehicle,
+				totalEvents: t.hardBrakingCount + t.rapidAccelCount,
+				score: tripScore(t),
+				savings: tripSavings(t, vehicle)
+			};
+		});
+	});
+
+	// Compute a simple driving score from trip data (same formula as API)
+	function computeScore(trips: TripLog[]): number | null {
+		const recent = [...trips].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+		if (recent.length === 0) return null;
+
+		let totalBraking = 0;
+		let totalAccel = 0;
+		let totalIdleMinutes = 0;
+		let totalDurationMinutes = 0;
+		let highSpeedTrips = 0;
+
+		for (const trip of recent) {
+			totalBraking += trip.hardBrakingCount;
+			totalAccel += trip.rapidAccelCount;
+			totalIdleMinutes += trip.idleMinutes;
+			totalDurationMinutes += trip.durationMinutes ?? 0;
+			if ((trip.maxSpeedKmh ?? 0) > 120) highSpeedTrips++;
 		}
-		return null;
+
+		const n = recent.length;
+		const avgBraking = totalBraking / n;
+		const avgAccel = totalAccel / n;
+		const idleRatio = totalDurationMinutes > 0 ? totalIdleMinutes / totalDurationMinutes : 0;
+		const highSpeedRatio = highSpeedTrips / n;
+
+		const brakingScore = Math.max(0, 25 - avgBraking * 5);
+		const accelScore = Math.max(0, 25 - avgAccel * 5);
+		const idleScore = Math.max(0, 25 - idleRatio * 100);
+		const speedScore = Math.max(0, 25 - highSpeedRatio * 50);
+
+		return Math.round(brakingScore + accelScore + idleScore + speedScore);
 	}
 
-	function getEfficiencyColor(kmPerLiter: number): { bg: string; text: string; label: string } {
-		if (kmPerLiter > 12) return { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400', label: 'Good' };
-		if (kmPerLiter >= 8) return { bg: 'bg-yellow-100 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-400', label: 'Moderate' };
-		return { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400', label: 'Poor' };
+	// Per-trip driving score
+	function tripScore(trip: TripLog): number {
+		const duration = trip.durationMinutes ?? 0;
+		const idleRatio = duration > 0 ? trip.idleMinutes / duration : 0;
+		const highSpeed = (trip.maxSpeedKmh ?? 0) > 120 ? 1 : 0;
+
+		const brakingScore = Math.max(0, 25 - trip.hardBrakingCount * 5);
+		const accelScore = Math.max(0, 25 - trip.rapidAccelCount * 5);
+		const idleScore = Math.max(0, 25 - idleRatio * 100);
+		const speedScore = Math.max(0, 25 - highSpeed * 50);
+
+		return Math.round(brakingScore + accelScore + idleScore + speedScore);
 	}
+
+	// Estimated fuel savings compared to an average driver (score 50)
+	const BASE_EFFICIENCY: Record<string, number> = {
+		gasoline: 12, diesel: 14, hybrid: 18, ev: 6
+	};
+
+	function tripSavings(trip: TripLog, vehicle: Vehicle | undefined): number {
+		if (!vehicle || trip.distanceKm < 0.01) return 0;
+		const baseEff = BASE_EFFICIENCY[vehicle.fuelType] ?? 12;
+		const score = tripScore(trip);
+		// Score 50 = baseline, score 100 = +15% efficiency, score 0 = -15%
+		const adjustment = ((score - 50) / 100) * 0.3;
+		const thisEff = baseEff * (1 + adjustment);
+		const baselineFuel = trip.distanceKm / baseEff;
+		const thisFuel = trip.distanceKm / thisEff;
+		const price = getFuelPricePerLiter();
+		return (baselineFuel - thisFuel) * price;
+	}
+
+	// Global driving score across all trips
+	const globalScore = $derived(computeScore(tripLogsQuery.data ?? []));
+
+	// Global totals
+	const globalTotals = $derived.by(() => {
+		const trips = tripLogsQuery.data ?? [];
+		return {
+			totalTrips: trips.length,
+			totalBraking: trips.reduce((sum, t) => sum + t.hardBrakingCount, 0),
+			totalAccel: trips.reduce((sum, t) => sum + t.rapidAccelCount, 0),
+			totalIdle: trips.reduce((sum, t) => sum + t.idleMinutes, 0),
+			totalEvents: trips.reduce((sum, t) => sum + t.hardBrakingCount + t.rapidAccelCount, 0)
+		};
+	});
+
+	let sortField = $state<'date' | 'score' | 'events' | 'braking' | 'accel' | 'idle' | 'savings'>('date');
+	let sortDir = $state<'asc' | 'desc'>('desc');
+
+	function toggleSort(field: typeof sortField) {
+		if (sortField === field) {
+			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortField = field;
+			sortDir = 'desc';
+		}
+	}
+
+	const sortedRows = $derived.by(() => {
+		const rows = [...tripRows];
+		const dir = sortDir === 'asc' ? 1 : -1;
+		rows.sort((a, b) => {
+			switch (sortField) {
+				case 'date':
+					return dir * a.date.localeCompare(b.date);
+				case 'score':
+					return dir * (a.score - b.score);
+				case 'events':
+					return dir * (a.totalEvents - b.totalEvents);
+				case 'braking':
+					return dir * (a.hardBrakingCount - b.hardBrakingCount);
+				case 'accel':
+					return dir * (a.rapidAccelCount - b.rapidAccelCount);
+				case 'idle':
+					return dir * (a.idleMinutes - b.idleMinutes);
+				case 'savings':
+					return dir * (a.savings - b.savings);
+				default:
+					return dir * a.date.localeCompare(b.date);
+			}
+		});
+		return rows;
+	});
 
 	function formatDate(dateStr: string): string {
 		const d = new Date(dateStr);
-		return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+		return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
 	}
 
 	function formatTime(dateStr: string): string {
 		const d = new Date(dateStr);
-		if (d.getHours() === 0 && d.getMinutes() === 0) return '';
 		return d.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
 	}
 
-	function formatNumber(n: number): string {
-		return n.toLocaleString('en-PH');
+	function scoreColor(score: number | null): string {
+		if (score == null) return 'text-muted-foreground';
+		if (score >= 75) return 'text-green-600 dark:text-green-400';
+		if (score >= 50) return 'text-amber-600 dark:text-amber-400';
+		return 'text-red-600 dark:text-red-400';
 	}
 
-	function parseOdometerFromNotes(notes?: string): { start: number; end: number } | null {
-		if (!notes) return null;
-		const match = notes.match(/Odometer:\s*([\d,]+(?:\.\d+)?)\s*→\s*([\d,]+(?:\.\d+)?)\s*km/);
-		if (match) {
-			return {
-				start: parseFloat(match[1].replace(/,/g, '')),
-				end: parseFloat(match[2].replace(/,/g, ''))
-			};
-		}
-		return null;
+	function scoreBadge(score: number | null): 'default' | 'secondary' | 'destructive' | 'outline' {
+		if (score == null) return 'outline';
+		if (score >= 75) return 'default';
+		if (score >= 50) return 'secondary';
+		return 'destructive';
 	}
 
-	// Summary statistics
-	const totalTrips = $derived(tripLogsQuery.data?.length ?? 0);
-	const totalDistance = $derived(
-		(tripLogsQuery.data ?? []).reduce((sum, t) => sum + t.distanceKm, 0)
-	);
-	const totalFuel = $derived(
-		(tripLogsQuery.data ?? []).reduce((sum, t) => sum + (t.fuelConsumedLiters ?? 0), 0)
-	);
-	const avgEfficiency = $derived(
-		totalFuel > 0 ? totalDistance / totalFuel : 0
-	);
+	function formatCurrency(n: number): string {
+		return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n);
+	}
+
+	function savingsColor(savings: number): string {
+		if (savings > 0.5) return 'text-green-600 dark:text-green-400';
+		if (savings < -0.5) return 'text-red-600 dark:text-red-400';
+		return 'text-muted-foreground';
+	}
 </script>
 
 <div class="space-y-6">
-	<!-- Header -->
 	<div>
-		<h1 class="text-3xl font-bold tracking-tight">Trip Tracking</h1>
-		<p class="text-muted-foreground">Monitor your driving habits and fuel efficiency</p>
+		<h1 class="text-3xl font-bold tracking-tight">Trips</h1>
+		<p class="text-muted-foreground">Driving events and trip history</p>
 	</div>
 
-	{#if !vehiclesQuery.data?.length && !vehiclesQuery.isLoading}
-		<Card.Root class="p-12 text-center">
-			<Card.Content>
-				<p class="text-lg text-muted-foreground mb-4">Add a vehicle first before logging trips.</p>
-				<Button onclick={() => goto(`${base}/vehicles/new`)} class="bg-violet-500 hover:bg-violet-600 text-white">
-					{#snippet children()}Add Vehicle{/snippet}
-				</Button>
+	<!-- Global Summary Cards -->
+	<div class="grid gap-4 grid-cols-2 md:grid-cols-5">
+		<Card.Root class="shadow-sm">
+			<Card.Content class="p-4 text-center">
+				<p class="text-xs text-muted-foreground font-medium">Driving Score</p>
+				<p class="text-3xl font-bold mt-1 {scoreColor(globalScore)}">
+					{globalScore ?? '--'}
+				</p>
+			</Card.Content>
+		</Card.Root>
+		<Card.Root class="shadow-sm">
+			<Card.Content class="p-4 text-center">
+				<p class="text-xs text-muted-foreground font-medium">Total Events</p>
+				<p class="text-3xl font-bold mt-1">{globalTotals.totalEvents}</p>
+			</Card.Content>
+		</Card.Root>
+		<Card.Root class="shadow-sm">
+			<Card.Content class="p-4 text-center">
+				<p class="text-xs text-muted-foreground font-medium">Hard Braking</p>
+				<p class="text-3xl font-bold mt-1 text-orange-600 dark:text-orange-400">{globalTotals.totalBraking}</p>
+			</Card.Content>
+		</Card.Root>
+		<Card.Root class="shadow-sm">
+			<Card.Content class="p-4 text-center">
+				<p class="text-xs text-muted-foreground font-medium">Rapid Accel</p>
+				<p class="text-3xl font-bold mt-1 text-amber-600 dark:text-amber-400">{globalTotals.totalAccel}</p>
+			</Card.Content>
+		</Card.Root>
+		<Card.Root class="shadow-sm col-span-2 md:col-span-1">
+			<Card.Content class="p-4 text-center">
+				<p class="text-xs text-muted-foreground font-medium">Idle Time</p>
+				<p class="text-3xl font-bold mt-1 text-blue-600 dark:text-blue-400">{globalTotals.totalIdle}<span class="text-sm font-normal text-muted-foreground"> min</span></p>
+			</Card.Content>
+		</Card.Root>
+	</div>
+
+	<!-- Per-Vehicle Summary -->
+	{#if (vehiclesQuery.data?.length ?? 0) > 1}
+		<div>
+			<h2 class="text-lg font-semibold mb-3">By Vehicle</h2>
+			<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+				{#each vehiclesQuery.data ?? [] as vehicle}
+					{@const stats = vehicleStats.get(vehicle.id)}
+					{@const score = stats ? computeScore(stats.trips) : null}
+					<Card.Root class="shadow-sm">
+						<Card.Content class="p-4">
+							<div class="flex items-center justify-between mb-3">
+								<div>
+									<p class="font-semibold">{vehicle.name}</p>
+									<p class="text-xs text-muted-foreground">{stats?.trips.length ?? 0} trips</p>
+								</div>
+								<span class="text-2xl font-bold {scoreColor(score)}">
+									{score ?? '--'}<span class="text-sm font-normal text-muted-foreground">/100</span>
+								</span>
+							</div>
+							<div class="grid grid-cols-4 gap-2 text-center text-xs">
+								<div>
+									<p class="text-muted-foreground">Events</p>
+									<p class="font-semibold text-sm">{stats?.totalEvents ?? 0}</p>
+								</div>
+								<div>
+									<p class="text-muted-foreground">Braking</p>
+									<p class="font-semibold text-sm text-orange-600 dark:text-orange-400">{stats?.totalBraking ?? 0}</p>
+								</div>
+								<div>
+									<p class="text-muted-foreground">Accel</p>
+									<p class="font-semibold text-sm text-amber-600 dark:text-amber-400">{stats?.totalAccel ?? 0}</p>
+								</div>
+								<div>
+									<p class="text-muted-foreground">Idle</p>
+									<p class="font-semibold text-sm text-blue-600 dark:text-blue-400">{stats?.totalIdle ?? 0}m</p>
+								</div>
+							</div>
+						</Card.Content>
+					</Card.Root>
+				{/each}
+			</div>
+		</div>
+	{/if}
+
+	<!-- Trip Log -->
+	{#if tripLogsQuery.isLoading}
+		<p class="text-muted-foreground p-6">Loading...</p>
+	{:else if !sortedRows.length}
+		<Card.Root class="shadow-sm">
+			<Card.Content class="p-12 text-center">
+				<p class="text-lg text-muted-foreground mb-1">No trips yet</p>
+				<p class="text-sm text-muted-foreground">Start a live tracking session to record trips.</p>
 			</Card.Content>
 		</Card.Root>
 	{:else}
-		<!-- 2-column layout -->
-		<div class="grid gap-6 lg:grid-cols-2">
-			<!-- Left column: Add Trip form -->
-			<Card.Root class="border-violet-200 dark:border-violet-800/40">
-				<Card.Header>
-					<Card.Title class="text-xl font-semibold">Add Trip</Card.Title>
-				</Card.Header>
-				<Card.Content>
-					<form onsubmit={handleSubmit} class="space-y-4">
-						{#if (vehiclesQuery.data?.length ?? 0) > 1}
-							<div class="space-y-2">
-								<Label for="vehicle">Vehicle</Label>
-								<select
-									id="vehicle"
-									bind:value={vehicleId}
-									class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
-								>
-									{#each vehiclesQuery.data ?? [] as v}
-										<option value={v.id}>{v.name}</option>
-									{/each}
-								</select>
-							</div>
-						{/if}
-
-						<div class="grid grid-cols-2 gap-4">
-							<div class="space-y-2">
-								<Label for="startOdo">Start Odometer (km)</Label>
-								<Input id="startOdo" type="number" step="0.1" min="0" placeholder="e.g. 16,300" bind:value={startOdometer} />
-							</div>
-							<div class="space-y-2">
-								<Label for="endOdo">End Odometer (km)</Label>
-								<Input id="endOdo" type="number" step="0.1" min="0" placeholder="e.g. 17,020" bind:value={endOdometer} />
-							</div>
-						</div>
-						{#if errors.distanceKm}
-							<p class="text-sm text-destructive">{errors.distanceKm}</p>
-						{/if}
-						{#if computedDistanceKm() > 0}
-							<p class="text-sm text-violet-600 dark:text-violet-400 font-medium">
-								Distance: {formatNumber(computedDistanceKm())} km
-							</p>
-						{/if}
-
-						<div class="grid grid-cols-2 gap-4">
-							<div class="space-y-2">
-								<Label for="fuel">Fuel Used (Liters)</Label>
-								<Input id="fuel" type="number" step="0.01" min="0" placeholder="e.g. 45.5" bind:value={fuelConsumedLiters} />
-								{#if errors.fuelConsumedLiters}<p class="text-sm text-destructive">{errors.fuelConsumedLiters}</p>{/if}
-							</div>
-							<div class="space-y-2">
-								<Label for="duration">Duration (minutes)</Label>
-								<Input id="duration" type="number" step="1" min="0" placeholder="e.g. 90" bind:value={durationMinutes} />
-							</div>
-						</div>
-
-						<div class="space-y-2">
-							<Label for="date">Date & Time</Label>
-							<Input id="date" type="date" bind:value={date} />
-						</div>
-
-						<Button
-							type="submit"
-							class="w-full text-white font-medium"
-							style="background-color: #8B5CF6;"
-							disabled={createMut.isPending}
-						>
-							{#snippet children()}{createMut.isPending ? 'Saving...' : 'Add Trip'}{/snippet}
-						</Button>
-
-						{#if createMut.isError}
-							<p class="text-sm text-destructive">{createMut.error.message}</p>
-						{/if}
-						{#if createMut.isSuccess}
-							<p class="text-sm text-green-600 dark:text-green-400">Trip added successfully!</p>
-						{/if}
-					</form>
-				</Card.Content>
-			</Card.Root>
-
-			<!-- Right column: All Trips list -->
-			<div class="space-y-4">
-				<h2 class="text-xl font-semibold">All Trips</h2>
-
-				{#if tripLogsQuery.isLoading}
-					<Card.Root class="p-6">
-						<p class="text-muted-foreground">Loading trips...</p>
-					</Card.Root>
-				{:else if !tripLogsQuery.data?.length}
-					<Card.Root class="p-6">
-						<p class="text-muted-foreground">No trips logged yet. Add your first trip to get started.</p>
-					</Card.Root>
-				{:else}
-					<div class="space-y-3 max-h-[600px] overflow-y-auto pr-1">
-						{#each tripLogsQuery.data ?? [] as trip}
-							{@const eff = getEfficiency(trip)}
-							{@const odo = parseOdometerFromNotes(trip.notes)}
-							<Card.Root class="border shadow-sm hover:shadow-md transition-shadow">
-								<Card.Content class="p-4">
-									<div class="flex items-start justify-between">
-										<div class="flex-1 space-y-2">
-											<!-- Date & time -->
-											<div class="flex items-center gap-2">
-												<p class="font-semibold text-sm">{formatDate(trip.date)}</p>
-												{#if formatTime(trip.date)}
-													<span class="text-xs text-muted-foreground">{formatTime(trip.date)}</span>
-												{/if}
-											</div>
-
-											<!-- Trip details -->
-											<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-												<span>{trip.distanceKm.toFixed(1)} km</span>
-												{#if trip.fuelConsumedLiters}
-													<span class="text-muted-foreground/50">|</span>
-													<span>{trip.fuelConsumedLiters.toFixed(1)} L</span>
-												{/if}
-												{#if trip.durationMinutes}
-													<span class="text-muted-foreground/50">|</span>
-													<span>{trip.durationMinutes.toFixed(0)} min</span>
-												{/if}
-											</div>
-
-											<!-- Odometer range -->
-											{#if odo}
-												<p class="text-xs text-muted-foreground">
-													{formatNumber(odo.start)} → {formatNumber(odo.end)} km
-												</p>
-											{/if}
-										</div>
-
-										<div class="flex items-center gap-2 ml-3">
-											<!-- Efficiency badge -->
-											{#if eff !== null}
-												{@const effColor = getEfficiencyColor(eff)}
-												<Badge class="{effColor.bg} {effColor.text} border-0 text-xs whitespace-nowrap">
-													{#snippet children()}{eff.toFixed(1)} km/L · {effColor.label}{/snippet}
-												</Badge>
-											{/if}
-
-											<!-- Delete button -->
-											<Button
-												variant="ghost"
-												size="sm"
-												class="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-												onclick={() => {
-													if (confirm('Delete this trip?')) deleteMut.mutate(trip.id);
-												}}
-											>
-												{#snippet children()}
-													<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-												{/snippet}
-											</Button>
-										</div>
-									</div>
-								</Card.Content>
-							</Card.Root>
-						{/each}
-					</div>
-				{/if}
-			</div>
+		<!-- Mobile: Sort selector -->
+		<div class="flex items-center gap-2 md:hidden">
+			<span class="text-xs text-muted-foreground">Sort by</span>
+			<select
+				bind:value={sortField}
+				class="h-8 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			>
+				<option value="date">Date</option>
+				<option value="score">Score</option>
+				<option value="events">Events</option>
+				<option value="savings">Est. Savings</option>
+				<option value="braking">Braking</option>
+				<option value="accel">Accel</option>
+				<option value="idle">Idle</option>
+			</select>
+			<button
+				type="button"
+				class="flex items-center justify-center w-8 h-8 rounded-md border border-input bg-background text-muted-foreground hover:text-foreground transition-colors"
+				onclick={() => (sortDir = sortDir === 'asc' ? 'desc' : 'asc')}
+				aria-label="Toggle sort direction"
+			>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+				</svg>
+			</button>
 		</div>
 
-		<!-- Summary Statistics bar -->
-		{#if totalTrips > 0}
-			<div class="rounded-xl p-6 text-white" style="background: linear-gradient(135deg, #8B5CF6, #7C3AED);">
-				<div class="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-					<div>
-						<p class="text-sm text-white/70 font-medium">Total Trips</p>
-						<p class="text-3xl font-bold mt-1">{totalTrips}</p>
-					</div>
-					<div>
-						<p class="text-sm text-white/70 font-medium">Total Distance</p>
-						<p class="text-3xl font-bold mt-1">{formatNumber(Math.round(totalDistance))} <span class="text-lg font-normal">km</span></p>
-					</div>
-					<div>
-						<p class="text-sm text-white/70 font-medium">Total Fuel</p>
-						<p class="text-3xl font-bold mt-1">{totalFuel.toFixed(1)} <span class="text-lg font-normal">L</span></p>
-					</div>
-					<div>
-						<p class="text-sm text-white/70 font-medium">Avg Efficiency</p>
-						<p class="text-3xl font-bold mt-1">
-							{#if avgEfficiency > 0}
-								{avgEfficiency.toFixed(1)} <span class="text-lg font-normal">km/L</span>
-							{:else}
-								-- <span class="text-lg font-normal">km/L</span>
-							{/if}
-						</p>
-					</div>
+		<!-- Mobile: Card list -->
+		<div class="space-y-3 md:hidden">
+			{#each sortedRows as row}
+				<Card.Root class="shadow-sm">
+					<Card.Content class="p-4">
+						<!-- Header: vehicle, type badge, score -->
+						<div class="flex items-center justify-between mb-2">
+							<div class="flex items-center gap-2">
+								<span class="font-semibold text-sm">{row.vehicle?.name ?? 'Unknown'}</span>
+								<Badge variant="outline">
+									{#snippet children()}{row.tripType}{/snippet}
+								</Badge>
+							</div>
+							<div class="text-right">
+								<span class="font-bold text-lg {scoreColor(row.score)}">{row.score}</span>
+								<span class="text-xs text-muted-foreground">/100</span>
+							</div>
+						</div>
+
+						<!-- Date + distance -->
+						<div class="flex items-center gap-2 text-xs text-muted-foreground mb-3">
+							<span>{formatDate(row.date)} {formatTime(row.date)}</span>
+							<span>&middot;</span>
+							<span>{row.distanceKm.toFixed(1)} km</span>
+						</div>
+
+						<!-- Stats grid -->
+						<div class="grid grid-cols-4 gap-2 text-center text-xs mb-3">
+							<div class="rounded-md bg-muted/50 py-1.5">
+								<p class="text-muted-foreground">Events</p>
+								<p class="font-semibold text-sm {row.totalEvents > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}">{row.totalEvents}</p>
+							</div>
+							<div class="rounded-md bg-muted/50 py-1.5">
+								<p class="text-muted-foreground">Braking</p>
+								<p class="font-semibold text-sm {row.hardBrakingCount > 0 ? 'text-orange-600 dark:text-orange-400' : ''}">{row.hardBrakingCount}</p>
+							</div>
+							<div class="rounded-md bg-muted/50 py-1.5">
+								<p class="text-muted-foreground">Accel</p>
+								<p class="font-semibold text-sm {row.rapidAccelCount > 0 ? 'text-amber-600 dark:text-amber-400' : ''}">{row.rapidAccelCount}</p>
+							</div>
+							<div class="rounded-md bg-muted/50 py-1.5">
+								<p class="text-muted-foreground">Idle</p>
+								<p class="font-semibold text-sm text-blue-600 dark:text-blue-400">{row.idleMinutes}m</p>
+							</div>
+						</div>
+
+						<!-- Savings -->
+						<div class="flex items-center justify-between pt-2 border-t">
+							<span class="text-xs text-muted-foreground">Est. Fuel Savings</span>
+							<span class="font-semibold text-sm {savingsColor(row.savings)}">
+								{row.savings >= 0 ? '+' : ''}{formatCurrency(row.savings)}
+							</span>
+						</div>
+					</Card.Content>
+				</Card.Root>
+			{/each}
+		</div>
+
+		<!-- Desktop: Table -->
+		<Card.Root class="shadow-sm hidden md:block">
+			<Card.Content class="p-0">
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm">
+						<thead>
+							<tr class="border-b bg-muted/50">
+								<th class="text-left px-4 py-3 font-medium">
+									<button type="button" class="flex items-center gap-1 hover:text-foreground transition-colors" onclick={() => toggleSort('date')}>
+										Date
+										{#if sortField === 'date'}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+												{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+											</svg>
+										{/if}
+									</button>
+								</th>
+								<th class="text-left px-4 py-3 font-medium">Vehicle</th>
+								<th class="text-center px-4 py-3 font-medium">
+									<button type="button" class="flex items-center gap-1 mx-auto hover:text-foreground transition-colors" onclick={() => toggleSort('events')}>
+										Events
+										{#if sortField === 'events'}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+												{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+											</svg>
+										{/if}
+									</button>
+								</th>
+								<th class="text-center px-4 py-3 font-medium">
+									<button type="button" class="flex items-center gap-1 mx-auto hover:text-foreground transition-colors" onclick={() => toggleSort('braking')}>
+										Braking
+										{#if sortField === 'braking'}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+												{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+											</svg>
+										{/if}
+									</button>
+								</th>
+								<th class="text-center px-4 py-3 font-medium">
+									<button type="button" class="flex items-center gap-1 mx-auto hover:text-foreground transition-colors" onclick={() => toggleSort('accel')}>
+										Accel
+										{#if sortField === 'accel'}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+												{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+											</svg>
+										{/if}
+									</button>
+								</th>
+								<th class="text-center px-4 py-3 font-medium">
+									<button type="button" class="flex items-center gap-1 mx-auto hover:text-foreground transition-colors" onclick={() => toggleSort('idle')}>
+										Idle
+										{#if sortField === 'idle'}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+												{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+											</svg>
+										{/if}
+									</button>
+								</th>
+								<th class="text-center px-4 py-3 font-medium">Distance</th>
+								<th class="text-center px-4 py-3 font-medium">Type</th>
+								<th class="text-center px-4 py-3 font-medium">
+									<button type="button" class="flex items-center gap-1 mx-auto hover:text-foreground transition-colors" onclick={() => toggleSort('score')}>
+										Score
+										{#if sortField === 'score'}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+												{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+											</svg>
+										{/if}
+									</button>
+								</th>
+								<th class="text-center px-4 py-3 font-medium">
+									<button type="button" class="flex items-center gap-1 mx-auto hover:text-foreground transition-colors" onclick={() => toggleSort('savings')}>
+										Est. Savings
+										{#if sortField === 'savings'}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+												{#if sortDir === 'desc'}<path d="m6 9 6 6 6-6"/>{:else}<path d="m18 15-6-6-6 6"/>{/if}
+											</svg>
+										{/if}
+									</button>
+								</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each sortedRows as row}
+								<tr class="border-b last:border-0 hover:bg-muted/30 transition-colors">
+									<td class="px-4 py-3">
+										<p class="font-medium">{formatDate(row.date)}</p>
+										<p class="text-xs text-muted-foreground">{formatTime(row.date)}</p>
+									</td>
+									<td class="px-4 py-3">
+										<p class="font-medium">{row.vehicle?.name ?? 'Unknown'}</p>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<span class="font-semibold {row.totalEvents > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}">
+											{row.totalEvents}
+										</span>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<span class="font-medium {row.hardBrakingCount > 0 ? 'text-orange-600 dark:text-orange-400' : ''}">
+											{row.hardBrakingCount}
+										</span>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<span class="font-medium {row.rapidAccelCount > 0 ? 'text-amber-600 dark:text-amber-400' : ''}">
+											{row.rapidAccelCount}
+										</span>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<span class="font-medium">{row.idleMinutes} min</span>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<span class="font-medium">{row.distanceKm.toFixed(1)} km</span>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<Badge variant="outline">
+											{#snippet children()}{row.tripType}{/snippet}
+										</Badge>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<span class="font-bold {scoreColor(row.score)}">{row.score}</span>
+										<span class="text-xs text-muted-foreground">/100</span>
+									</td>
+									<td class="px-4 py-3 text-center">
+										<span class="font-medium {savingsColor(row.savings)}">
+											{row.savings >= 0 ? '+' : ''}{formatCurrency(row.savings)}
+										</span>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
-			</div>
-		{/if}
+			</Card.Content>
+		</Card.Root>
 	{/if}
 </div>

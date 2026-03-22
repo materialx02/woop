@@ -88,11 +88,13 @@ export const fuelLogsApi = {
 		};
 		await db.fuelLogs.add(log);
 
-		// Update vehicle odometer
-		await db.vehicles.update(data.vehicleId, {
-			odometerKm: data.odometerKm,
-			updatedAt: new Date()
-		});
+		// Update vehicle odometer if provided
+		if (data.odometerKm) {
+			await db.vehicles.update(data.vehicleId, {
+				odometerKm: data.odometerKm,
+				updatedAt: new Date()
+			});
+		}
 
 		return log;
 	},
@@ -108,20 +110,27 @@ export const fuelLogsApi = {
 			.equals(vehicleId)
 			.toArray();
 
-		logs.sort((a, b) => a.odometerKm - b.odometerKm);
+		// Only sort/compute odometer-based stats for logs that have odometer data
+		const logsWithOdo = logs.filter((l) => l.odometerKm != null);
+		logsWithOdo.sort((a, b) => a.odometerKm! - b.odometerKm!);
 
 		const efficiencyData: FuelStats['efficiencyData'] = [];
 		let totalCost = 0;
 		let totalLiters = 0;
 		let totalDistance = 0;
 
-		for (let i = 1; i < logs.length; i++) {
-			const prev = logs[i - 1];
-			const curr = logs[i];
-			totalCost += curr.totalCost;
+		// Sum total cost from all logs
+		for (const log of logs) {
+			totalCost += log.totalCost;
+			if (log.liters) totalLiters += log.liters;
+		}
+
+		for (let i = 1; i < logsWithOdo.length; i++) {
+			const prev = logsWithOdo[i - 1];
+			const curr = logsWithOdo[i];
 
 			if (curr.isFullTank && prev.isFullTank && curr.liters) {
-				const distance = curr.odometerKm - prev.odometerKm;
+				const distance = curr.odometerKm! - prev.odometerKm!;
 				const liters = curr.liters;
 
 				if (distance > 0 && liters > 0) {
@@ -135,10 +144,6 @@ export const fuelLogsApi = {
 					});
 				}
 			}
-		}
-
-		if (logs.length > 0) {
-			totalCost += logs[0].totalCost;
 		}
 
 		return {
