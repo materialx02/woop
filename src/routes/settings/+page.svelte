@@ -13,14 +13,18 @@
 		syncSettingsToSW,
 		init as initNotifications
 	} from '$lib/notifications.js';
+	import { subscription } from '$lib/subscription.svelte.js';
+	import { checkAiHealth } from '$lib/ai-service.js';
 
 	// Profile settings
 	let displayName = $state('Driver');
 	let defaultFuelType = $state('gasoline');
 	let currency = $state('PHP');
 
-	// AI Service
-	let aiServiceUrl = $state('');
+	// Subscription
+	let activationKey = $state('');
+	let activationError = $state('');
+	let activationSuccess = $state('');
 	let aiStatus = $state<'unchecked' | 'checking' | 'connected' | 'disconnected'>('unchecked');
 
 	// Fuel price
@@ -53,7 +57,6 @@
 					// ignore parse errors
 				}
 			}
-			aiServiceUrl = localStorage.getItem('drivefuel_ai_url') ?? '';
 			notifPermission = permissionState();
 		}
 	});
@@ -97,30 +100,30 @@
 		}
 	}
 
-	function saveAiUrl() {
-		const url = aiServiceUrl.trim();
-		if (url) {
-			localStorage.setItem('drivefuel_ai_url', url);
+	function activatePro() {
+		activationError = '';
+		activationSuccess = '';
+		const ok = subscription.activate(activationKey);
+		if (ok) {
+			activationSuccess = 'Pro plan activated successfully!';
+			activationKey = '';
+			setTimeout(() => (activationSuccess = ''), 5000);
 		} else {
-			localStorage.removeItem('drivefuel_ai_url');
+			activationError = 'Invalid activation key. Format: DFPRO-XXXX-XXXX-XXXX';
 		}
-		saveMessage = 'AI service URL saved!';
-		setTimeout(() => (saveMessage = ''), 3000);
+	}
+
+	function deactivatePro() {
+		if (!confirm('Are you sure you want to deactivate your Pro subscription?')) return;
+		subscription.deactivate();
+		activationSuccess = '';
+		activationError = '';
 	}
 
 	async function testAiConnection() {
-		const url = aiServiceUrl.trim();
-		if (!url) {
-			aiStatus = 'disconnected';
-			return;
-		}
 		aiStatus = 'checking';
-		try {
-			const res = await fetch(`${url}/health`);
-			aiStatus = res.ok ? 'connected' : 'disconnected';
-		} catch {
-			aiStatus = 'disconnected';
-		}
+		const ok = await checkAiHealth();
+		aiStatus = ok ? 'connected' : 'disconnected';
 	}
 
 	async function exportAllData() {
@@ -247,49 +250,130 @@
 				</Card.Content>
 			</Card.Root>
 
-			<!-- Card: AI Service -->
-			<Card.Root>
+			<!-- Card: Subscription -->
+			<Card.Root class={subscription.isPro ? 'border-primary/40' : ''}>
 				<Card.Header>
-					<Card.Title>AI Service</Card.Title>
+					<div class="flex items-center justify-between">
+						<Card.Title>Subscription</Card.Title>
+						{#if subscription.isPro}
+							<span class="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary px-3 py-1 text-xs font-semibold">
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+								Pro Active
+							</span>
+						{:else}
+							<span class="inline-flex items-center rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+								Free Plan
+							</span>
+						{/if}
+					</div>
 					<Card.Description>
-						{#snippet children()}Connect to the DriveFuel AI service for predictions and insights{/snippet}
+						{#snippet children()}Manage your DriveFuel AI subscription{/snippet}
 					</Card.Description>
 				</Card.Header>
 				<Card.Content>
 					<div class="space-y-4">
-						<div class="space-y-2">
-							<Label for="aiServiceUrl">AI Service URL</Label>
-							<div class="flex gap-2">
-								<Input
-									id="aiServiceUrl"
-									type="url"
-									bind:value={aiServiceUrl}
-									placeholder="http://localhost:8000"
-								/>
-								<Button variant="outline" onclick={() => { saveAiUrl(); testAiConnection(); }}>
-									{#snippet children()}
-										{#if aiStatus === 'checking'}
-											Testing...
-										{:else}
-											Test
+						{#if subscription.isPro}
+							<!-- Pro status -->
+							<div class="rounded-lg border border-primary/20 bg-primary/5 p-4">
+								<div class="flex items-start gap-3">
+									<div class="shrink-0 w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary">
+											<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+										</svg>
+									</div>
+									<div class="flex-1">
+										<p class="font-semibold text-sm">Pro Plan</p>
+										<p class="text-xs text-muted-foreground mt-0.5">
+											Full access to AI predictions, driving analysis, cost forecasting, and real-time coaching.
+										</p>
+										{#if subscription.activatedAt}
+											<p class="text-xs text-muted-foreground mt-1">
+												Activated: {new Date(subscription.activatedAt).toLocaleDateString()}
+											</p>
 										{/if}
-									{/snippet}
-								</Button>
+									</div>
+								</div>
 							</div>
-							<p class="text-xs text-muted-foreground">
-								Leave empty to use the app without AI features. All core features work offline.
-							</p>
-						</div>
 
-						{#if aiStatus === 'connected'}
-							<div class="flex items-center gap-2 text-sm text-green-600">
-								<span class="inline-block h-2 w-2 rounded-full bg-green-500"></span>
-								Connected to AI service
+							<!-- AI Service status -->
+							<div class="flex items-center justify-between">
+								<span class="text-sm text-muted-foreground">AI Service Status</span>
+								<div class="flex items-center gap-2">
+									{#if aiStatus === 'connected'}
+										<span class="inline-block h-2 w-2 rounded-full bg-green-500"></span>
+										<span class="text-sm text-green-600">Connected</span>
+									{:else if aiStatus === 'disconnected'}
+										<span class="inline-block h-2 w-2 rounded-full bg-red-500"></span>
+										<span class="text-sm text-red-500">Offline</span>
+									{:else if aiStatus === 'checking'}
+										<span class="text-sm text-muted-foreground">Checking...</span>
+									{:else}
+										<Button variant="ghost" size="sm" onclick={testAiConnection}>
+											{#snippet children()}Check{/snippet}
+										</Button>
+									{/if}
+								</div>
 							</div>
-						{:else if aiStatus === 'disconnected'}
-							<div class="flex items-center gap-2 text-sm text-red-500">
-								<span class="inline-block h-2 w-2 rounded-full bg-red-500"></span>
-								Cannot connect to AI service
+
+							<Button variant="outline" class="w-full text-destructive border-destructive/30 hover:bg-destructive/10" onclick={deactivatePro}>
+								{#snippet children()}Deactivate Pro{/snippet}
+							</Button>
+						{:else}
+							<!-- Free plan — activation form -->
+							<div class="rounded-lg border border-dashed p-4">
+								<div class="space-y-3">
+									<div class="flex items-start gap-3">
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground mt-0.5 shrink-0">
+											<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+										</svg>
+										<div>
+											<p class="font-semibold text-sm">Upgrade to Pro</p>
+											<p class="text-xs text-muted-foreground mt-0.5">
+												Enter your activation key to unlock AI-powered insights, predictions, and real-time driving analysis.
+											</p>
+										</div>
+									</div>
+
+									<div class="space-y-2">
+										<Label for="activationKey">Activation Key</Label>
+										<div class="flex gap-2">
+											<Input
+												id="activationKey"
+												type="text"
+												bind:value={activationKey}
+												placeholder="DFPRO-XXXX-XXXX-XXXX"
+												class="font-mono uppercase"
+											/>
+											<Button onclick={activatePro} disabled={!activationKey.trim()}>
+												{#snippet children()}Activate{/snippet}
+											</Button>
+										</div>
+									</div>
+
+									{#if activationError}
+										<p class="text-sm text-destructive">{activationError}</p>
+									{/if}
+									{#if activationSuccess}
+										<p class="text-sm text-green-600">{activationSuccess}</p>
+									{/if}
+								</div>
+							</div>
+
+							<!-- Pro features list -->
+							<div class="space-y-2">
+								<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pro includes</p>
+								{#each [
+									'AI fuel efficiency predictions',
+									'Smart cost forecasting',
+									'Driving behavior analysis',
+									'Real-time AI coaching during trips',
+									'Personalized optimization tips'
+								] as feature}
+									<div class="flex items-center gap-2 text-sm">
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-primary shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+										<span>{feature}</span>
+									</div>
+								{/each}
 							</div>
 						{/if}
 					</div>

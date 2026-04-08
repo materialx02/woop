@@ -221,6 +221,8 @@
 
 	beforeNavigate(({ cancel, to }) => {
 		if (isTracking && to) {
+			// Allow same-page navigation (e.g. stripping query params)
+			if (to.url.pathname === page.url.pathname) return;
 			cancel();
 			showNavDialog = true;
 			const targetUrl = to.url.pathname;

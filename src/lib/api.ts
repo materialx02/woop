@@ -291,13 +291,8 @@ export const insightsApi = {
 			predictEfficiency,
 			predictCost,
 			analyzeDriving,
-			trainEfficiencyModel,
-			getConfiguredAiUrl
+			trainEfficiencyModel
 		} = await import('$lib/ai-service.js');
-
-		if (!getConfiguredAiUrl()) {
-			throw new Error('AI service not configured. Set the AI Service URL in Settings.');
-		}
 
 		const vehicle = await db.vehicles.get(vehicleId);
 		if (!vehicle) throw new Error('Vehicle not found');

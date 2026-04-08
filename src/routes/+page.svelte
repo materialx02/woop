@@ -4,6 +4,6 @@
 	import { onMount } from 'svelte';
 
 	onMount(() => {
-		goto(`${base}/insights`, { replaceState: true });
+		goto(`${base}/fuel-log`, { replaceState: true });
 	});
 </script>

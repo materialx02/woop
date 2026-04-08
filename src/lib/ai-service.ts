@@ -1,31 +1,35 @@
 /**
  * Client-side AI service client.
- * Calls the FastAPI AI service directly from the browser.
- * The AI service URL is configurable via localStorage.
+ * Calls the DriveFuel AI service with secure device-token authentication.
  * All calls gracefully return null if the service is unavailable.
  */
 
-function getAiUrl(): string | null {
-	if (typeof window === 'undefined') return null;
-	return localStorage.getItem('drivefuel_ai_url') || null;
-}
+const AI_BASE_URL = 'https://fuelwise-ai.onrender.com';
 
-export function setAiUrl(url: string) {
-	localStorage.setItem('drivefuel_ai_url', url);
-}
-
-export function getConfiguredAiUrl(): string | null {
-	return getAiUrl();
+/** Generate or retrieve a persistent device token for API authentication. */
+function getDeviceToken(): string {
+	const key = 'drivefuel-device-token';
+	let token = localStorage.getItem(key);
+	if (!token) {
+		// Generate a secure random token: prefix + UUID + random hex
+		const uuid = crypto.randomUUID();
+		const entropy = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('');
+		token = `df_${uuid}_${entropy}`;
+		localStorage.setItem(key, token);
+	}
+	return token;
 }
 
 async function callAi<T>(path: string, body: unknown): Promise<T | null> {
-	const baseUrl = getAiUrl();
-	if (!baseUrl) return null;
-
 	try {
-		const res = await fetch(`${baseUrl}${path}`, {
+		const res = await fetch(`${AI_BASE_URL}${path}`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${getDeviceToken()}`
+			},
 			body: JSON.stringify(body)
 		});
 
@@ -169,11 +173,10 @@ export function analyzeRealtime(vehicleId: string, fuelType: string, metrics: Re
 }
 
 export async function checkAiHealth(): Promise<boolean> {
-	const baseUrl = getAiUrl();
-	if (!baseUrl) return false;
-
 	try {
-		const res = await fetch(`${baseUrl}/health`);
+		const res = await fetch(`${AI_BASE_URL}/health`, {
+			headers: { Authorization: `Bearer ${getDeviceToken()}` }
+		});
 		return res.ok;
 	} catch {
 		return false;

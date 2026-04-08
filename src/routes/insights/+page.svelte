@@ -13,6 +13,8 @@
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { subscription } from '$lib/subscription.svelte.js';
+	import SubscriptionGate from '$lib/components/SubscriptionGate.svelte';
 
 	const queryClient = useQueryClient();
 
@@ -353,17 +355,23 @@
 			<h1 class="text-3xl font-bold tracking-tight">AI-Powered Insights</h1>
 			<p class="text-muted-foreground">Personalized recommendations and predictions</p>
 		</div>
-		<div class="flex gap-2">
-			{#if vehicleId}
-				<Button
-					onclick={() => triggerMut.mutate(vehicleId)}
-					disabled={triggerMut.isPending}
-				>
-					{#snippet children()}{triggerMut.isPending ? 'Analyzing...' : 'Generate Insights'}{/snippet}
-				</Button>
-			{/if}
-		</div>
+		{#if subscription.isPro}
+			<div class="flex gap-2">
+				{#if vehicleId}
+					<Button
+						onclick={() => triggerMut.mutate(vehicleId)}
+						disabled={triggerMut.isPending}
+					>
+						{#snippet children()}{triggerMut.isPending ? 'Analyzing...' : 'Generate Insights'}{/snippet}
+					</Button>
+				{/if}
+			</div>
+		{/if}
 	</div>
+
+	{#if !subscription.isPro}
+		<SubscriptionGate />
+	{:else}
 
 	<!-- Vehicle Selector -->
 	{#if vehiclesQuery.data && vehiclesQuery.data.length > 1}
@@ -397,8 +405,8 @@
 			<Card.Content class="pt-6">
 				<p class="text-sm text-red-700 dark:text-red-400">
 					{triggerMut.error.message}
-					{#if triggerMut.error.message.includes('unavailable')}
-						 — Make sure the AI service is running (docker-compose up ai-service)
+					{#if triggerMut.error.message.includes('unavailable') || triggerMut.error.message.includes('Failed')}
+						 — The AI service may be temporarily unavailable. Please try again later.
 					{/if}
 				</p>
 			</Card.Content>
@@ -709,4 +717,6 @@
 			{/each}
 		</div>
 	</div>
+
+	{/if}
 </div>

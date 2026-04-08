@@ -78,7 +78,6 @@
 		{ href: '/trips', label: 'Trips', icon: 'trips' },
 		{ href: '/vehicles', label: 'Vehicles', icon: 'vehicles' },
 		{ href: '/fuel-log', label: 'Fuel Log', icon: 'fuel' },
-		{ href: '/insights', label: 'Insights', icon: 'insights' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' }
 	];
 
@@ -131,7 +130,7 @@
 				</button>
 
 				<!-- Logo -->
-				<a href="{base}/insights" class="flex items-center gap-2">
+				<a href="{base}/fuel-log" class="flex items-center gap-2">
 					<div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 2C12 2 4 8 4 14a8 8 0 0 0 16 0c0-6-8-12-8-12Z"/>
@@ -141,7 +140,7 @@
 					</div>
 					<div>
 						<span class="font-bold text-base leading-tight block">DriveFuel</span>
-						<span class="text-[10px] text-muted-foreground leading-tight">AI-Powered Fuel Tracking</span>
+						<span class="text-[10px] text-muted-foreground leading-tight">Smart Fuel Tracking</span>
 					</div>
 				</a>
 
@@ -196,7 +195,7 @@
 				</div>
 				<div>
 					<span class="font-bold text-base leading-tight block">DriveFuel</span>
-					<span class="text-[10px] text-muted-foreground leading-tight">AI-Powered Fuel Tracking</span>
+					<span class="text-[10px] text-muted-foreground leading-tight">Smart Fuel Tracking</span>
 				</div>
 				<button
 					onclick={() => (drawerOpen = false)}
