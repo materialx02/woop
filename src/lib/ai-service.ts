@@ -7,11 +7,11 @@
 
 function getAiUrl(): string | null {
 	if (typeof window === 'undefined') return null;
-	return localStorage.getItem('fuelwise_ai_url') || null;
+	return localStorage.getItem('drivefuel_ai_url') || null;
 }
 
 export function setAiUrl(url: string) {
-	localStorage.setItem('fuelwise_ai_url', url);
+	localStorage.setItem('drivefuel_ai_url', url);
 }
 
 export function getConfiguredAiUrl(): string | null {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { db } from '$lib/db.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -37,7 +38,7 @@
 	// Load settings from localStorage on mount
 	$effect(() => {
 		if (typeof window !== 'undefined') {
-			const saved = localStorage.getItem('fuelwise-settings');
+			const saved = localStorage.getItem('drivefuel-settings');
 			if (saved) {
 				try {
 					const settings = JSON.parse(saved);
@@ -52,7 +53,7 @@
 					// ignore parse errors
 				}
 			}
-			aiServiceUrl = localStorage.getItem('fuelwise_ai_url') ?? '';
+			aiServiceUrl = localStorage.getItem('drivefuel_ai_url') ?? '';
 			notifPermission = permissionState();
 		}
 	});
@@ -67,7 +68,7 @@
 			efficiencyInsights,
 			maintenanceReminders
 		};
-		localStorage.setItem('fuelwise-settings', JSON.stringify(settings));
+		localStorage.setItem('drivefuel-settings', JSON.stringify(settings));
 		saveMessage = 'Settings saved successfully!';
 		setTimeout(() => (saveMessage = ''), 3000);
 
@@ -99,9 +100,9 @@
 	function saveAiUrl() {
 		const url = aiServiceUrl.trim();
 		if (url) {
-			localStorage.setItem('fuelwise_ai_url', url);
+			localStorage.setItem('drivefuel_ai_url', url);
 		} else {
-			localStorage.removeItem('fuelwise_ai_url');
+			localStorage.removeItem('drivefuel_ai_url');
 		}
 		saveMessage = 'AI service URL saved!';
 		setTimeout(() => (saveMessage = ''), 3000);
@@ -143,7 +144,7 @@
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = `fuelwise-export-${new Date().toISOString().split('T')[0]}.json`;
+			a.download = `drivefuel-export-${new Date().toISOString().split('T')[0]}.json`;
 			document.body.appendChild(a);
 			a.click();
 			document.body.removeChild(a);
@@ -251,7 +252,7 @@
 				<Card.Header>
 					<Card.Title>AI Service</Card.Title>
 					<Card.Description>
-						{#snippet children()}Connect to the FuelWise AI service for predictions and insights{/snippet}
+						{#snippet children()}Connect to the DriveFuel AI service for predictions and insights{/snippet}
 					</Card.Description>
 				</Card.Header>
 				<Card.Content>
@@ -512,12 +513,12 @@
 						<!-- App icon -->
 						<div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary">
 							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M3 22V8l9-6 9 6v14" />
-								<path d="M12 22V12" />
-								<path d="M3 14h18" />
+								<path d="M12 2C12 2 4 8 4 14a8 8 0 0 0 16 0c0-6-8-12-8-12Z"/>
+								<path d="M12 22v-4"/>
+								<path d="M9 16l3-3 3 3"/>
 							</svg>
 						</div>
-						<Card.Title>FuelWise</Card.Title>
+						<Card.Title>DriveFuel</Card.Title>
 					</div>
 				</Card.Header>
 				<Card.Content>
@@ -558,6 +559,15 @@
 						<p class="text-xs text-muted-foreground border-t pt-4">
 							All data is stored locally on your device. No account or login is required.
 						</p>
+						<a
+							href="{base}/privacy"
+							class="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-2"
+						>
+							Privacy Policy
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="m9 18 6-6-6-6"/>
+							</svg>
+						</a>
 					</div>
 				</Card.Content>
 			</Card.Root>

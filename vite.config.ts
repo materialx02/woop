@@ -16,15 +16,15 @@ export default defineConfig({
 				'icon.svg'
 			],
 			manifest: {
-				name: 'FuelWise - AI-Powered Fuel Tracking',
-				short_name: 'FuelWise',
+				name: 'DriveFuel - AI-Powered Fuel Tracking',
+				short_name: 'DriveFuel',
 				description:
 					'AI-powered fuel tracking and optimization platform helping you save money and drive more efficiently.',
 				theme_color: '#4F46E5',
 				background_color: '#0a0a1a',
 				display: 'standalone',
-				scope: '/woop/',
-				start_url: '/woop/',
+				scope: '/',
+				start_url: '/',
 				categories: ['auto', 'utilities', 'lifestyle'],
 				icons: [
 					{

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: fuelwise-ai
+    name: drivefuel-ai
     runtime: python
     region: singapore
     plan: free

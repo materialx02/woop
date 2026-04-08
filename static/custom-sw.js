@@ -1,5 +1,5 @@
 /**
- * FuelWise Custom Service Worker Extension
+ * DriveFuel Custom Service Worker Extension
  *
  * Loaded via importScripts by the Workbox-generated service worker.
  * Handles background notifications, trip tracking, and periodic checks.
@@ -7,10 +7,10 @@
 
 // ── Constants ──────────────────────────────────────────────────────
 
-var SCOPE = '/woop';
+var SCOPE = '';
 var ICON = SCOPE + '/pwa-192x192.png';
 var BADGE = SCOPE + '/favicon-32x32.png';
-var NOTIFICATIONS_DB = 'FuelWiseNotifications';
+var NOTIFICATIONS_DB = 'DriveFuelNotifications';
 var NOTIFICATIONS_DB_VERSION = 1;
 
 // ── IndexedDB Helpers ──────────────────────────────────────────────
@@ -75,9 +75,9 @@ function saveSettings(settings) {
 		.catch(function () {});
 }
 
-function openFuelWiseDB() {
+function openDriveFuelDB() {
 	return new Promise(function (resolve, reject) {
-		var req = indexedDB.open('FuelWiseDB');
+		var req = indexedDB.open('DriveFuelDB');
 		req.onsuccess = function () {
 			resolve(req.result);
 		};
@@ -90,7 +90,7 @@ function openFuelWiseDB() {
 // ── Notification Condition Checks ──────────────────────────────────
 
 function checkUnreadInsights() {
-	return openFuelWiseDB()
+	return openDriveFuelDB()
 		.then(function (db) {
 			return new Promise(function (resolve) {
 				var tx = db.transaction('aiInsights', 'readonly');
@@ -102,7 +102,7 @@ function checkUnreadInsights() {
 				req.onsuccess = function () {
 					var count = req.result;
 					if (count > 0) {
-						self.registration.showNotification('FuelWise Insights', {
+						self.registration.showNotification('DriveFuel Insights', {
 							body:
 								'You have ' +
 								count +
@@ -127,12 +127,12 @@ function checkUnreadInsights() {
 			});
 		})
 		.catch(function (e) {
-			console.warn('[FuelWise SW] Failed to check insights:', e);
+			console.warn('[DriveFuel SW] Failed to check insights:', e);
 		});
 }
 
 function checkMaintenanceReminders() {
-	return openFuelWiseDB()
+	return openDriveFuelDB()
 		.then(function (db) {
 			return new Promise(function (resolve) {
 				var tx = db.transaction('vehicles', 'readonly');
@@ -177,7 +177,7 @@ function checkMaintenanceReminders() {
 			});
 		})
 		.catch(function (e) {
-			console.warn('[FuelWise SW] Failed to check maintenance:', e);
+			console.warn('[DriveFuel SW] Failed to check maintenance:', e);
 		});
 }
 
@@ -253,7 +253,7 @@ self.addEventListener('notificationclick', function (event) {
 
 // Periodic Background Sync → check conditions while app is closed
 self.addEventListener('periodicsync', function (event) {
-	if (event.tag === 'fuelwise-check') {
+	if (event.tag === 'drivefuel-check') {
 		event.waitUntil(runNotificationChecks());
 	}
 });

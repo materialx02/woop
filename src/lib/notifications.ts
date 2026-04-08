@@ -1,5 +1,5 @@
 /**
- * Notification service for FuelWise PWA.
+ * Notification service for DriveFuel PWA.
  *
  * Provides local notifications via the Service Worker when the app is
  * backgrounded or closed. Uses Periodic Background Sync (Chrome/Edge)
@@ -34,7 +34,7 @@ export async function requestPermission(): Promise<NotificationPermission> {
 
 export function getSettings(): NotificationSettings {
 	try {
-		const raw = localStorage.getItem('fuelwise-settings');
+		const raw = localStorage.getItem('drivefuel-settings');
 		if (raw) {
 			const s = JSON.parse(raw);
 			return {
@@ -74,7 +74,7 @@ async function registerPeriodicSync(tag: string, minInterval: number): Promise<b
 			}
 		}
 	} catch (e) {
-		console.warn('[FuelWise] Periodic sync registration failed:', e);
+		console.warn('[DriveFuel] Periodic sync registration failed:', e);
 	}
 	return false;
 }
@@ -121,5 +121,5 @@ export async function init(): Promise<void> {
 
 	// Register periodic background sync (Chrome/Edge only)
 	// Every ~12 hours for maintenance/insights checks
-	await registerPeriodicSync('fuelwise-check', 12 * 60 * 60 * 1000);
+	await registerPeriodicSync('drivefuel-check', 12 * 60 * 60 * 1000);
 }

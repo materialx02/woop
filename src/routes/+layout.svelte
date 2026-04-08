@@ -6,17 +6,26 @@
 	import { themeState } from '$lib/theme.svelte.js';
 	import { pwaInfo } from 'virtual:pwa-info';
 	import { onMount } from 'svelte';
+	import Onboarding from '$lib/components/Onboarding.svelte';
+	import { db } from '$lib/db.js';
+	import { tripState } from '$lib/trip-state.svelte.js';
 
 	import { init as initNotifications } from '$lib/notifications.js';
 
 	let { children } = $props();
 
 	let drawerOpen = $state(false);
-
+	let showOnboarding = $state(false);
+	let onboardingChecked = $state(false);
 
 	$effect(() => {
 		themeState.init();
 	});
+
+	function completeOnboarding() {
+		localStorage.setItem('drivefuel-onboarding-completed', 'true');
+		showOnboarding = false;
+	}
 
 	// Close mobile drawer on navigation
 	$effect(() => {
@@ -25,6 +34,16 @@
 	});
 
 	onMount(async () => {
+		// Show onboarding if never completed and no vehicles exist
+		const completed = localStorage.getItem('drivefuel-onboarding-completed');
+		if (!completed) {
+			const vehicles = await db.vehicles.count();
+			if (vehicles === 0) {
+				showOnboarding = true;
+			}
+		}
+		onboardingChecked = true;
+
 		if (pwaInfo) {
 			const { registerSW } = await import('virtual:pwa-register');
 			registerSW({
@@ -74,7 +93,7 @@
 	// Derive current page title from route
 	let currentPageTitle = $derived.by(() => {
 		const item = navItems.find((n) => isActive(n.href));
-		return item?.label ?? 'FuelWise';
+		return item?.label ?? 'DriveFuel';
 	});
 
 	// Derive current page icon from route
@@ -86,7 +105,7 @@
 </script>
 
 <svelte:head>
-	<title>FuelWise</title>
+	<title>DriveFuel</title>
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
 	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -115,14 +134,13 @@
 				<a href="{base}/insights" class="flex items-center gap-2">
 					<div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M3 22V6l9-4 9 4v16" />
-							<path d="M12 2v20" />
-							<path d="M3 10h18" />
-							<path d="M3 14h18" />
+							<path d="M12 2C12 2 4 8 4 14a8 8 0 0 0 16 0c0-6-8-12-8-12Z"/>
+							<path d="M12 22v-4"/>
+							<path d="M9 16l3-3 3 3"/>
 						</svg>
 					</div>
 					<div>
-						<span class="font-bold text-base leading-tight block">FuelWise</span>
+						<span class="font-bold text-base leading-tight block">DriveFuel</span>
 						<span class="text-[10px] text-muted-foreground leading-tight">AI-Powered Fuel Tracking</span>
 					</div>
 				</a>
@@ -171,14 +189,13 @@
 			<div class="flex items-center gap-2.5 px-5 h-14 border-b">
 				<div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M3 22V6l9-4 9 4v16" />
-						<path d="M12 2v20" />
-						<path d="M3 10h18" />
-						<path d="M3 14h18" />
+						<path d="M12 2C12 2 4 8 4 14a8 8 0 0 0 16 0c0-6-8-12-8-12Z"/>
+						<path d="M12 22v-4"/>
+						<path d="M9 16l3-3 3 3"/>
 					</svg>
 				</div>
 				<div>
-					<span class="font-bold text-base leading-tight block">FuelWise</span>
+					<span class="font-bold text-base leading-tight block">DriveFuel</span>
 					<span class="text-[10px] text-muted-foreground leading-tight">AI-Powered Fuel Tracking</span>
 				</div>
 				<button
@@ -275,6 +292,10 @@
 		</div>
 
 	</div>
+
+	{#if onboardingChecked && showOnboarding && !tripState.active}
+		<Onboarding onComplete={completeOnboarding} />
+	{/if}
 </QueryClientProvider>
 
 {#snippet navIcon(icon: string)}

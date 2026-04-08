@@ -9,7 +9,7 @@ const DEFAULT_FUEL_PRICE = 59.5;
 
 export function getFuelPricePerLiter(): number {
 	if (typeof window === 'undefined') return DEFAULT_FUEL_PRICE;
-	const saved = localStorage.getItem('fuelwise-settings');
+	const saved = localStorage.getItem('drivefuel-settings');
 	if (saved) {
 		try {
 			const val = JSON.parse(saved).fuelPricePerLiter;

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
-        "https://materialx02.github.io",
+        "https://bayani-labs.github.io",
     ]
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

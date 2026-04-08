@@ -1,6 +1,6 @@
 export type Theme = 'light' | 'dark' | 'system';
 
-const STORAGE_KEY = 'fuelwise-theme';
+const STORAGE_KEY = 'drivefuel-theme';
 
 function createThemeState() {
 	let theme = $state<Theme>('dark');

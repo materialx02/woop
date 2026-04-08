@@ -75,7 +75,7 @@ export interface FuelPrice {
 }
 
 // Database
-const db = new Dexie('FuelWiseDB') as Dexie & {
+const db = new Dexie('DriveFuelDB') as Dexie & {
 	vehicles: EntityTable<Vehicle, 'id'>;
 	fuelLogs: EntityTable<FuelLog, 'id'>;
 	tripLogs: EntityTable<TripLog, 'id'>;

@@ -6,7 +6,7 @@ from app.routers import efficiency, cost_forecast, driving_score, realtime
 from app.services.model_registry import model_registry
 
 app = FastAPI(
-    title="FuelWise AI Service",
+    title="DriveFuel AI Service",
     description="AI/ML microservice for fuel efficiency prediction, cost forecasting, and driving analysis",
     version="1.0.0",
 )

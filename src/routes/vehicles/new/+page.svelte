@@ -36,10 +36,10 @@
 				const price = parseFloat(fuelPricePerLiter);
 				if (!isNaN(price) && price > 0) {
 					try {
-						const raw = localStorage.getItem('fuelwise-settings');
+						const raw = localStorage.getItem('drivefuel-settings');
 						const settings = raw ? JSON.parse(raw) : {};
 						settings.fuelPricePerLiter = price;
-						localStorage.setItem('fuelwise-settings', JSON.stringify(settings));
+						localStorage.setItem('drivefuel-settings', JSON.stringify(settings));
 					} catch { /* ignore */ }
 				}
 			}

@@ -7,7 +7,7 @@
 	import { db } from '$lib/db.js';
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { onMount } from 'svelte';
 	import {
@@ -15,6 +15,7 @@
 		sendTripUpdate,
 		endTripNotification
 	} from '$lib/notifications.js';
+	import { tripState } from '$lib/trip-state.svelte.js';
 
 	const queryClient = useQueryClient();
 
@@ -205,11 +206,49 @@
 
 	onMount(() => {
 		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('beforeunload', handleBeforeUnload);
 		return () => {
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('beforeunload', handleBeforeUnload);
 			if (bgNotifInterval) clearInterval(bgNotifInterval);
 		};
 	});
+
+	// --- Navigation Guard ---
+	// Prevent accidental navigation away while tracking is active
+	let showNavDialog = $state(false);
+	let pendingNavigation = $state<(() => void) | null>(null);
+
+	beforeNavigate(({ cancel, to }) => {
+		if (isTracking && to) {
+			cancel();
+			showNavDialog = true;
+			const targetUrl = to.url.pathname;
+			pendingNavigation = () => {
+				stopTracking();
+				goto(targetUrl);
+			};
+		}
+	});
+
+	function handleBeforeUnload(e: BeforeUnloadEvent) {
+		if (isTracking) {
+			e.preventDefault();
+		}
+	}
+
+	function dismissNavDialog() {
+		showNavDialog = false;
+		pendingNavigation = null;
+	}
+
+	function confirmLeave() {
+		showNavDialog = false;
+		if (pendingNavigation) {
+			pendingNavigation();
+			pendingNavigation = null;
+		}
+	}
 
 	// --- Derived ---
 	let drivingQuality = $derived.by(() => {
@@ -455,6 +494,7 @@
 	// --- Start/Stop ---
 	function startTracking() {
 		isTracking = true;
+		tripState.setActive(true);
 		startTime = new Date();
 		elapsedSeconds = 0;
 		distance = 0;
@@ -509,6 +549,7 @@
 
 	function stopTracking() {
 		isTracking = false;
+		tripState.setActive(false);
 
 		// Clear timer
 		if (timerInterval) {
@@ -1162,3 +1203,57 @@
 
 	{/if}
 </div>
+
+<!-- Navigation Confirmation Dialog -->
+{#if showNavDialog}
+	<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+		<div class="w-full max-w-sm rounded-xl bg-card border shadow-2xl p-6 space-y-4">
+			<!-- Pulsing indicator -->
+			<div class="flex items-center gap-3">
+				<span class="relative flex h-3 w-3">
+					<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+					<span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+				</span>
+				<h2 class="text-lg font-semibold">Trip in Progress</h2>
+			</div>
+
+			<p class="text-sm text-muted-foreground">
+				You're currently tracking a trip. Leaving this page will
+				<strong>stop tracking</strong> and save your trip automatically.
+			</p>
+
+			<!-- Trip summary -->
+			<div class="rounded-lg bg-muted/50 p-3 grid grid-cols-3 gap-2 text-center text-xs">
+				<div>
+					<p class="text-muted-foreground">Distance</p>
+					<p class="font-semibold text-sm">{distance.toFixed(2)} km</p>
+				</div>
+				<div>
+					<p class="text-muted-foreground">Time</p>
+					<p class="font-semibold text-sm">{elapsedMinutes}m {elapsedSeconds % 60}s</p>
+				</div>
+				<div>
+					<p class="text-muted-foreground">Avg Speed</p>
+					<p class="font-semibold text-sm">{avgSpeed.toFixed(0)} km/h</p>
+				</div>
+			</div>
+
+			<div class="flex gap-3 pt-2">
+				<Button
+					variant="outline"
+					class="flex-1"
+					onclick={dismissNavDialog}
+				>
+					{#snippet children()}Keep Tracking{/snippet}
+				</Button>
+				<Button
+					variant="destructive"
+					class="flex-1"
+					onclick={confirmLeave}
+				>
+					{#snippet children()}Stop & Leave{/snippet}
+				</Button>
+			</div>
+		</div>
+	</div>
+{/if}
